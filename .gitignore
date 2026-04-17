@@ -1,0 +1,23 @@
+# Binaries
+/bin/
+/dist/
+
+# Go workspace is developer-local
+go.work
+go.work.sum
+
+# Local databases used by samples / tool
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Env files
+.env
+.env.*
+docs.md
