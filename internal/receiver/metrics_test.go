@@ -9,6 +9,12 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 )
 
+const (
+	metricTypeGauge     = 1
+	metricTypeSum       = 2
+	metricTypeHistogram = 3
+)
+
 func ptr[T any](v T) *T { return &v }
 
 func TestNormalizeMetrics_NilRequest(t *testing.T) {
@@ -69,7 +75,7 @@ func TestNormalizeMetrics_Gauge(t *testing.T) {
 	if p.Name != "http_requests_total" {
 		t.Errorf("name: got %q, want %q", p.Name, "http_requests_total")
 	}
-	if p.Type != 1 {
+	if p.Type != metricTypeGauge {
 		t.Errorf("type: got %d, want 1 (gauge)", p.Type)
 	}
 	if p.ServiceName != "test-svc" {
@@ -126,8 +132,14 @@ func TestNormalizeMetrics_Sum(t *testing.T) {
 		t.Fatalf("expected 1 point, got %d", len(points))
 	}
 	p := points[0]
-	if p.Type != 2 {
+	if p.Type != metricTypeSum {
 		t.Errorf("type: got %d, want 2 (sum)", p.Type)
+	}
+	if p.Name != "db_operations_total" {
+		t.Errorf("name: got %q, want %q", p.Name, "db_operations_total")
+	}
+	if p.ServiceName != "test-svc" {
+		t.Errorf("service: got %q, want %q", p.ServiceName, "test-svc")
 	}
 	if p.ValueDouble == nil || *p.ValueDouble != 3.14 {
 		t.Errorf("value_double: got %v, want 3.14", p.ValueDouble)
@@ -177,8 +189,11 @@ func TestNormalizeMetrics_Histogram(t *testing.T) {
 		t.Fatalf("expected 1 point, got %d", len(points))
 	}
 	p := points[0]
-	if p.Type != 3 {
+	if p.Type != metricTypeHistogram {
 		t.Errorf("type: got %d, want 3 (histogram)", p.Type)
+	}
+	if p.ServiceName != "test-svc" {
+		t.Errorf("service: got %q, want %q", p.ServiceName, "test-svc")
 	}
 	if p.HistCount == nil || *p.HistCount != 10 {
 		t.Errorf("hist_count: got %v, want 10", p.HistCount)
@@ -186,10 +201,10 @@ func TestNormalizeMetrics_Histogram(t *testing.T) {
 	if p.HistSum == nil || *p.HistSum != 5.5 {
 		t.Errorf("hist_sum: got %v, want 5.5", p.HistSum)
 	}
-	if len(p.HistBounds) != 3 {
-		t.Errorf("hist_bounds len: got %d, want 3", len(p.HistBounds))
+	if len(p.HistBounds) != 3 || p.HistBounds[0] != 0.1 {
+		t.Errorf("hist_bounds: got %v, want [0.1, 0.5, 1.0]", p.HistBounds)
 	}
-	if len(p.HistCounts) != 4 {
-		t.Errorf("hist_counts len: got %d, want 4", len(p.HistCounts))
+	if len(p.HistCounts) != 4 || p.HistCounts[0] != 2 {
+		t.Errorf("hist_counts: got %v, want [2, 5, 2, 1]", p.HistCounts)
 	}
 }
