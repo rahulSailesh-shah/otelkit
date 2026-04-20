@@ -106,10 +106,20 @@ func (h *TodoHandler) CreateTodo(w http.ResponseWriter, r *http.Request) {
 
 	var req models.CreateTodoRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.requestCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("method", "POST"),
+			attribute.String("route", "/todos"),
+			attribute.Int("status", http.StatusBadRequest),
+		))
 		return
 	}
 
 	if req.Title == "" {
+		h.requestCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("method", "POST"),
+			attribute.String("route", "/todos"),
+			attribute.Int("status", http.StatusBadRequest),
+		))
 		return
 	}
 
