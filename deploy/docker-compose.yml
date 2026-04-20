@@ -1,0 +1,10 @@
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    container_name: otelkit-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14317:4317" # OTLP gRPC
+      - "14318:4318" # OTLP HTTP

@@ -22,5 +22,8 @@ go.work.sum
 # Env files
 .env
 .env.*
+
+
 docs.md
 examples/
+.cursor/

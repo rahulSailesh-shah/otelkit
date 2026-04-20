@@ -2,16 +2,23 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/rahulSailesh-shah/otelkit/internal/export"
 	"github.com/rahulSailesh-shah/otelkit/internal/receiver"
 	"github.com/rahulSailesh-shah/otelkit/internal/store/db"
 	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
+
+// OTLP gRPC on Jaeger all-in-one, mapped to host 14317 in deploy/docker-compose.yml
+// so it does not collide with otelkit's receiver on :4317.
+const jaegerOTLPEndpoint = "localhost:14317"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -22,7 +29,7 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "run":
-		if err := runReceiverOnly(); err != nil {
+		if err := runReceiverOnly(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -34,25 +41,45 @@ func main() {
 	}
 }
 
-func runReceiverOnly() error {
-	db := db.NewSQLiteDB(context.Background())
-	if err := db.Connect(); err != nil {
+func runReceiverOnly(args []string) error {
+	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
+	grpcAddr := runCmd.String("grpc-addr", ":4317", "OTLP gRPC listen address")
+	if err := runCmd.Parse(args); err != nil {
+		return err
+	}
+
+	database := db.NewSQLiteDB(context.Background())
+	if err := database.Connect(); err != nil {
 		return err
 	}
 	defer func() {
-		if err := db.Close(); err != nil {
+		if err := database.Close(); err != nil {
 			log.Printf("close db: %v", err)
 		}
 	}()
 
-	repo := repo.New(db.GetDB())
+	queries := repo.New(database.GetDB())
 
-	traceHandler := receiver.NewTraceHandler(repo)
-	srv, err := receiver.StartGRPC(":4317", traceHandler)
+	fanout, err := buildFanout()
 	if err != nil {
 		return err
 	}
-	log.Printf("OTLP gRPC receiver listening on :4317")
+	defer func() {
+		if fanout == nil {
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		fanout.Shutdown(shutdownCtx)
+	}()
+
+	traceHandler := receiver.NewTraceHandler(queries, fanout)
+	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler)
+	if err != nil {
+		return err
+	}
+	log.Printf("OTLP gRPC receiver listening on %s", *grpcAddr)
+	log.Printf("Fan-out: jaeger OTLP -> %s", jaegerOTLPEndpoint)
 	log.Printf("Waiting for traces... (Ctrl+C to stop)")
 
 	sigCh := make(chan os.Signal, 1)
@@ -61,4 +88,12 @@ func runReceiverOnly() error {
 
 	srv.Stop()
 	return nil
+}
+
+func buildFanout() (*export.Fanout, error) {
+	jaeger, err := export.NewJaegerExporter(jaegerOTLPEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	return export.NewFanout(jaeger), nil
 }

@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log"
+	"time"
 
+	"github.com/rahulSailesh-shah/otelkit/internal/export"
 	repo "github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -15,26 +17,25 @@ import (
 )
 
 type TraceHandler struct {
-	repo *repo.Queries
+	repo   *repo.Queries
+	fanout *export.Fanout
 	coltracepb.UnimplementedTraceServiceServer
 }
 
-func NewTraceHandler(repo *repo.Queries) *TraceHandler {
-	return &TraceHandler{repo: repo}
+func NewTraceHandler(repo *repo.Queries, fanout *export.Fanout) *TraceHandler {
+	return &TraceHandler{repo: repo, fanout: fanout}
 }
 
 func (h *TraceHandler) Export(
 	ctx context.Context,
 	req *coltracepb.ExportTraceServiceRequest,
 ) (*coltracepb.ExportTraceServiceResponse, error) {
-	_ = ctx
 	spans, err := normalize(req)
 	if err != nil {
 		return nil, err
 	}
 
-	spansData, _ := json.MarshalIndent(spans, "", "  ")
-	log.Printf("ExportTraceServiceRequest (JSON):\n%s", string(spansData))
+	log.Println("received", len(spans), "spans")
 
 	for _, s := range spans {
 		if err := h.repo.InsertSpan(ctx, s); err != nil {
@@ -42,6 +43,15 @@ func (h *TraceHandler) Export(
 			return nil, err
 		}
 	}
+
+	if h.fanout != nil {
+		go func(req *coltracepb.ExportTraceServiceRequest) {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			h.fanout.ExportTraces(bgCtx, req)
+		}(req)
+	}
+
 	return &coltracepb.ExportTraceServiceResponse{}, nil
 }
 
