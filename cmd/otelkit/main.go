@@ -81,7 +81,7 @@ func runReceiverOnly(args []string) error {
 	}
 	log.Printf("OTLP gRPC receiver listening — traces + metrics on %s", *grpcAddr)
 	log.Printf("Fan-out: jaeger OTLP -> %s", jaegerOTLPEndpoint)
-	log.Printf("Waiting for traces... (Ctrl+C to stop)")
+	log.Printf("Waiting for spans and metrics... (Ctrl+C to stop)")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
