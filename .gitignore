@@ -21,3 +21,4 @@ go.work.sum
 .env
 .env.*
 docs.md
+examples/
