@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"syscall"
 
 	"github.com/rahulSailesh-shah/otelkit/internal/receiver"
+	"github.com/rahulSailesh-shah/otelkit/internal/store/db"
+	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
 func main() {
@@ -32,7 +35,19 @@ func main() {
 }
 
 func runReceiverOnly() error {
-	traceHandler := receiver.NewTraceHandler()
+	db := db.NewSQLiteDB(context.Background())
+	if err := db.Connect(); err != nil {
+		return err
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("close db: %v", err)
+		}
+	}()
+
+	repo := repo.New(db.GetDB())
+
+	traceHandler := receiver.NewTraceHandler(repo)
 	srv, err := receiver.StartGRPC(":4317", traceHandler)
 	if err != nil {
 		return err

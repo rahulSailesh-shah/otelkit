@@ -8,6 +8,8 @@ go.work.sum
 
 # Local databases used by samples / tool
 *.db
+*.db-wal
+*.db-shm
 *.db-journal
 *.sqlite
 *.sqlite3

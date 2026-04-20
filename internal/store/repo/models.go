@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.30.0
 
-package db
+package repo
 
 type Span struct {
 	SpanID        string  `json:"span_id"`

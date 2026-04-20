@@ -3,7 +3,7 @@
 //   sqlc v1.30.0
 // source: spans.sql
 
-package db
+package repo
 
 import (
 	"context"
