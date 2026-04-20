@@ -129,6 +129,11 @@ func (h *TodoHandler) CreateTodo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Create(ctx, todo); err != nil {
+		h.requestCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("method", "POST"),
+			attribute.String("route", "/todos"),
+			attribute.Int("status", http.StatusInternalServerError),
+		))
 		return
 	}
 
@@ -302,6 +307,11 @@ func (h *TodoHandler) UpdateTodo(w http.ResponseWriter, r *http.Request) {
 	}
 	dbSpan.End()
 
+	h.dbOperationCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("operation", "get"),
+		attribute.String("table", "todos"),
+	))
+
 	// Update fields
 	if req.Title != nil {
 		todo.Title = *req.Title
@@ -323,7 +333,7 @@ func (h *TodoHandler) UpdateTodo(w http.ResponseWriter, r *http.Request) {
 	}
 	updateSpan.End()
 
-	h.dbOperationCounter.Add(ctx, 2, metric.WithAttributes(
+	h.dbOperationCounter.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("operation", "update"),
 		attribute.String("table", "todos"),
 	))
