@@ -74,7 +74,7 @@ func runReceiverOnly(args []string) error {
 	}()
 
 	traceHandler := receiver.NewTraceHandler(queries, fanout)
-	metricsHandler := receiver.NewMetricsHandler()
+	metricsHandler := receiver.NewMetricsHandler(queries)
 	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler, metricsHandler)
 	if err != nil {
 		return err

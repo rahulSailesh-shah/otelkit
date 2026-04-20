@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"encoding/json"
 	"testing"
 
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -81,8 +82,15 @@ func TestNormalizeMetrics_Gauge(t *testing.T) {
 	if p.TimestampNs != 1000000 {
 		t.Errorf("timestamp_ns: got %d, want 1000000", p.TimestampNs)
 	}
-	if p.Attributes["method"] != "GET" {
-		t.Errorf("attributes method: got %v, want GET", p.Attributes["method"])
+	// Attributes is a JSON string, need to unmarshal to access
+	var attrs map[string]string
+	if p.Attributes != nil {
+		if err := json.Unmarshal([]byte(*p.Attributes), &attrs); err != nil {
+			t.Fatalf("failed to unmarshal attributes: %v", err)
+		}
+	}
+	if attrs["method"] != "GET" {
+		t.Errorf("attributes method: got %v, want GET", attrs["method"])
 	}
 }
 
@@ -195,10 +203,24 @@ func TestNormalizeMetrics_Histogram(t *testing.T) {
 	if p.HistSum == nil || *p.HistSum != 5.5 {
 		t.Errorf("hist_sum: got %v, want 5.5", p.HistSum)
 	}
-	if len(p.HistBounds) != 3 || p.HistBounds[0] != 0.1 {
-		t.Errorf("hist_bounds: got %v, want [0.1, 0.5, 1.0]", p.HistBounds)
+	// HistBounds and HistCounts are JSON strings, need to unmarshal to access
+	var bounds []float64
+	if p.HistBounds != nil {
+		if err := json.Unmarshal([]byte(*p.HistBounds), &bounds); err != nil {
+			t.Fatalf("failed to unmarshal hist_bounds: %v", err)
+		}
 	}
-	if len(p.HistCounts) != 4 || p.HistCounts[0] != 2 {
-		t.Errorf("hist_counts: got %v, want [2, 5, 2, 1]", p.HistCounts)
+	if len(bounds) != 3 || bounds[0] != 0.1 {
+		t.Errorf("hist_bounds: got %v, want [0.1, 0.5, 1.0]", bounds)
+	}
+
+	var counts []int64
+	if p.HistCounts != nil {
+		if err := json.Unmarshal([]byte(*p.HistCounts), &counts); err != nil {
+			t.Fatalf("failed to unmarshal hist_counts: %v", err)
+		}
+	}
+	if len(counts) != 4 || counts[0] != 2 {
+		t.Errorf("hist_counts: got %v, want [2, 5, 2, 1]", counts)
 	}
 }

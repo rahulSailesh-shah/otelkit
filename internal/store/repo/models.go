@@ -4,6 +4,25 @@
 
 package repo
 
+type MetricPoint struct {
+	ID            int64    `json:"id"`
+	Name          string   `json:"name"`
+	Description   *string  `json:"description"`
+	Unit          *string  `json:"unit"`
+	Type          int64    `json:"type"`
+	ServiceName   string   `json:"service_name"`
+	Attributes    *string  `json:"attributes"`
+	TimestampNs   int64    `json:"timestamp_ns"`
+	ValueInt      *int64   `json:"value_int"`
+	ValueDouble   *float64 `json:"value_double"`
+	HistCount     *int64   `json:"hist_count"`
+	HistSum       *float64 `json:"hist_sum"`
+	HistBounds    *string  `json:"hist_bounds"`
+	HistCounts    *string  `json:"hist_counts"`
+	ResourceAttrs *string  `json:"resource_attrs"`
+	IngestedAt    int64    `json:"ingested_at"`
+}
+
 type Span struct {
 	SpanID        string  `json:"span_id"`
 	TraceID       string  `json:"trace_id"`

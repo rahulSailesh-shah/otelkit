@@ -23,7 +23,8 @@ go.work.sum
 .env
 .env.*
 
-
+docs/
 docs.md
 examples/
 .cursor/
+.claude/
