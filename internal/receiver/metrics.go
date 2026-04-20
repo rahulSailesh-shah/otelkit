@@ -11,6 +11,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const (
+	metricTypeGauge     = 1
+	metricTypeSum       = 2
+	metricTypeHistogram = 3
+)
+
 // MetricPoint is a normalized representation of a single OTLP metric data point.
 // Type: 1=gauge 2=sum 3=histogram
 type MetricPoint struct {
@@ -50,6 +56,8 @@ func (h *MetricsHandler) Export(
 	return &colmetricspb.ExportMetricsServiceResponse{}, nil
 }
 
+// normalizeMetrics walks the OTLP proto hierarchy and returns a flat list of MetricPoints.
+// The error return is reserved for when JSON marshaling is added in the SQLite storage phase.
 func normalizeMetrics(req *colmetricspb.ExportMetricsServiceRequest) ([]MetricPoint, error) {
 	if req == nil {
 		return nil, nil
@@ -82,10 +90,10 @@ func extractDataPoints(m *metricspb.Metric, serviceName string, resourceAttrs ma
 
 	switch data := m.GetData().(type) {
 	case *metricspb.Metric_Gauge:
-		return numberDataPoints(base, 1, data.Gauge.GetDataPoints())
+		return numberDataPoints(base, metricTypeGauge, data.Gauge.GetDataPoints())
 
 	case *metricspb.Metric_Sum:
-		return numberDataPoints(base, 2, data.Sum.GetDataPoints())
+		return numberDataPoints(base, metricTypeSum, data.Sum.GetDataPoints())
 
 	case *metricspb.Metric_Histogram:
 		return histogramDataPoints(base, data.Histogram.GetDataPoints())
@@ -122,7 +130,7 @@ func histogramDataPoints(base MetricPoint, dps []*metricspb.HistogramDataPoint) 
 	pts := make([]MetricPoint, 0, len(dps))
 	for _, dp := range dps {
 		p := base
-		p.Type = 3
+		p.Type = metricTypeHistogram
 		p.TimestampNs = int64(dp.GetTimeUnixNano())
 		p.Attributes = keyValuesToMap(dp.GetAttributes())
 

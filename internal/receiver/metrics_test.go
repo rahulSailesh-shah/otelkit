@@ -9,12 +9,6 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 )
 
-const (
-	metricTypeGauge     = 1
-	metricTypeSum       = 2
-	metricTypeHistogram = 3
-)
-
 func ptr[T any](v T) *T { return &v }
 
 func TestNormalizeMetrics_NilRequest(t *testing.T) {
