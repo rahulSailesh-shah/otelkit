@@ -3,6 +3,7 @@ package receiver
 import (
 	"net"
 
+	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 )
@@ -12,7 +13,11 @@ type Server struct {
 	lis        net.Listener
 }
 
-func StartGRPC(addr string, traceHandler coltracepb.TraceServiceServer) (*Server, error) {
+func StartGRPC(
+	addr string,
+	traceHandler coltracepb.TraceServiceServer,
+	metricsHandler colmetricspb.MetricsServiceServer,
+) (*Server, error) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -20,6 +25,7 @@ func StartGRPC(addr string, traceHandler coltracepb.TraceServiceServer) (*Server
 
 	s := grpc.NewServer()
 	coltracepb.RegisterTraceServiceServer(s, traceHandler)
+	colmetricspb.RegisterMetricsServiceServer(s, metricsHandler)
 
 	go func() {
 		_ = s.Serve(lis)

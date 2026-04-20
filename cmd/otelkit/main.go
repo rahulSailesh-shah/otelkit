@@ -74,11 +74,12 @@ func runReceiverOnly(args []string) error {
 	}()
 
 	traceHandler := receiver.NewTraceHandler(queries, fanout)
-	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler)
+	metricsHandler := receiver.NewMetricsHandler()
+	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler, metricsHandler)
 	if err != nil {
 		return err
 	}
-	log.Printf("OTLP gRPC receiver listening on %s", *grpcAddr)
+	log.Printf("OTLP gRPC receiver listening — traces + metrics on %s", *grpcAddr)
 	log.Printf("Fan-out: jaeger OTLP -> %s", jaegerOTLPEndpoint)
 	log.Printf("Waiting for traces... (Ctrl+C to stop)")
 
