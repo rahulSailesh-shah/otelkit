@@ -1,4 +1,7 @@
-.PHONY: install build test tidy sample dev
+DB_FILE ?= ./otelkit.db
+MIGRATIONS_DIR = internal/store/migrations
+
+.PHONY: install build test tidy sample dev migrate-up migrate-down migrate-status sqlc-gen
 
 install:
 	go install ./cmd/otelkit
@@ -15,8 +18,24 @@ tidy:
 	cd examples/todos && go mod tidy
 	go work sync
 
-sample:
+todos:
 	cd examples/todos && go run .
 
 dev: install
 	cd examples/todos && otelkit run --service todo-api -- go run .
+
+migrate-up:
+	@echo "Running migrations..."
+	@goose -dir $(MIGRATIONS_DIR) sqlite3 $(DB_FILE) up
+
+migrate-down:
+	@echo "Rolling back migration..."
+	@goose -dir $(MIGRATIONS_DIR) sqlite3 $(DB_FILE) down
+
+migrate-status:
+	@echo "Migration status..."
+	@goose -dir $(MIGRATIONS_DIR) sqlite3 $(DB_FILE) status
+
+sqlc-gen:
+	@echo "Generating sqlc..."
+	@sqlc generate
