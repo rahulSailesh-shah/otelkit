@@ -20,6 +20,9 @@ import (
 // so it does not collide with otelkit's receiver on :4317.
 const jaegerOTLPEndpoint = "localhost:14317"
 
+// Prometheus exporter endpoint
+const prometheusExporterAddr = ":9091"
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "error: no command provided\n")
@@ -74,13 +77,14 @@ func runReceiverOnly(args []string) error {
 	}()
 
 	traceHandler := receiver.NewTraceHandler(queries, fanout)
-	metricsHandler := receiver.NewMetricsHandler(queries)
+	metricsHandler := receiver.NewMetricsHandler(queries, fanout)
 	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler, metricsHandler)
 	if err != nil {
 		return err
 	}
 	log.Printf("OTLP gRPC receiver listening — traces + metrics on %s", *grpcAddr)
 	log.Printf("Fan-out: jaeger OTLP -> %s", jaegerOTLPEndpoint)
+	log.Printf("Fan-out: prometheus exporter -> %s", prometheusExporterAddr)
 	log.Printf("Waiting for spans and metrics... (Ctrl+C to stop)")
 
 	sigCh := make(chan os.Signal, 1)
@@ -96,5 +100,14 @@ func buildFanout() (*export.Fanout, error) {
 	if err != nil {
 		return nil, err
 	}
-	return export.NewFanout(jaeger), nil
+
+	prometheus, err := export.NewPrometheusExporter(prometheusExporterAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	traces := []export.TraceExporter{jaeger}
+	metrics := []export.MetricsExporter{prometheus}
+
+	return export.NewFanoutWithMetrics(traces, metrics), nil
 }

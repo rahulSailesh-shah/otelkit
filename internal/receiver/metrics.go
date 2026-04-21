@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"time"
 
+	"github.com/rahulSailesh-shah/otelkit/internal/export"
 	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
@@ -20,12 +22,13 @@ const (
 )
 
 type MetricsHandler struct {
-	repo *repo.Queries
+	repo   *repo.Queries
+	fanout *export.Fanout
 	colmetricspb.UnimplementedMetricsServiceServer
 }
 
-func NewMetricsHandler(repo *repo.Queries) *MetricsHandler {
-	return &MetricsHandler{repo: repo}
+func NewMetricsHandler(repo *repo.Queries, fanout *export.Fanout) *MetricsHandler {
+	return &MetricsHandler{repo: repo, fanout: fanout}
 }
 
 func (h *MetricsHandler) Export(
@@ -37,10 +40,20 @@ func (h *MetricsHandler) Export(
 		return nil, status.Errorf(codes.Internal, "normalize metrics: %v", err)
 	}
 
+	log.Println("[metric] received", len(params), "metric points")
+
 	for _, p := range params {
 		if err := h.repo.InsertMetricPoint(ctx, p); err != nil {
-			log.Printf("failed to insert metric point: %v", err)
+			log.Printf("[metric] failed to insert metric point: %v", err)
 		}
+	}
+
+	if h.fanout != nil {
+		go func(req *colmetricspb.ExportMetricsServiceRequest) {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			h.fanout.ExportMetrics(bgCtx, req)
+		}(req)
 	}
 
 	return &colmetricspb.ExportMetricsServiceResponse{}, nil

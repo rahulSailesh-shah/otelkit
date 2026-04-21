@@ -35,11 +35,11 @@ func (h *TraceHandler) Export(
 		return nil, err
 	}
 
-	log.Println("received", len(spans), "spans")
+	log.Println("[trace] received", len(spans), "spans")
 
 	for _, s := range spans {
 		if err := h.repo.InsertSpan(ctx, s); err != nil {
-			log.Printf("insert span: %v", err)
+			log.Printf("[trace] insert span: %v", err)
 			return nil, err
 		}
 	}

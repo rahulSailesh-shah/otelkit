@@ -21,8 +21,8 @@ tidy:
 todos:
 	cd examples/todos && go run .
 
-dev: install
-	cd examples/todos && otelkit run --service todo-api -- go run .
+run:
+	cd cmd/otelkit && go run . run
 
 migrate-up:
 	@echo "Running migrations..."

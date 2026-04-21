@@ -8,3 +8,28 @@ services:
       - "16686:16686" # Jaeger UI
       - "14317:4317" # OTLP gRPC
       - "14318:4318" # OTLP HTTP
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: otelkit-prometheus
+    ports:
+      - "9090:9090" # Prometheus UI
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--enable-feature=otlp-write-receiver"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: otelkit-grafana
+    ports:
+      - "3000:3000" # Grafana UI
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
