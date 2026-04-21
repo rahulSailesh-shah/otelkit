@@ -6,39 +6,33 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
-	"syscall"
+	"strings"
 	"time"
 
 	"github.com/rahulSailesh-shah/otelkit/internal/export"
+	"github.com/rahulSailesh-shah/otelkit/internal/launcher"
 	"github.com/rahulSailesh-shah/otelkit/internal/receiver"
 	"github.com/rahulSailesh-shah/otelkit/internal/store/db"
 	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
-// OTLP gRPC on Jaeger all-in-one, mapped to host 14317 in deploy/docker-compose.yml
-// so it does not collide with otelkit's receiver on :4317.
 const jaegerOTLPEndpoint = "localhost:14317"
-
-// Prometheus exporter endpoint
 const prometheusExporterAddr = ":9091"
-
-// Loki endpoint
 const lokiEndpoint = "http://localhost:3100"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "error: no command provided\n")
-		fmt.Fprintf(os.Stderr, "usage: %s <command>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "available commands: run, version\n")
+		fmt.Fprintf(os.Stderr, "usage: %s <command>\navailable commands: run, version\n", os.Args[0])
 		os.Exit(2)
 	}
 	switch os.Args[1] {
 	case "run":
-		if err := runReceiverOnly(os.Args[2:]); err != nil {
+		code, err := runLauncher(os.Args[2:])
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 			os.Exit(1)
 		}
+		os.Exit(code)
 	case "version":
 		fmt.Println("otelkit dev")
 	default:
@@ -47,16 +41,22 @@ func main() {
 	}
 }
 
-func runReceiverOnly(args []string) error {
+func runLauncher(args []string) (int, error) {
+	flagArgs, childArgs := splitOnDashDash(args)
+
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 	grpcAddr := runCmd.String("grpc-addr", ":4317", "OTLP gRPC listen address")
-	if err := runCmd.Parse(args); err != nil {
-		return err
+	service := runCmd.String("service", "", "service name injected as OTEL_SERVICE_NAME")
+	runCmd.Parse(flagArgs)
+
+	if len(childArgs) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: otelkit run [--grpc-addr :4317] [--service <name>] -- <command> [args...]")
+		return 2, nil
 	}
 
 	database := db.NewSQLiteDB(context.Background())
 	if err := database.Connect(); err != nil {
-		return err
+		return 1, err
 	}
 	defer func() {
 		if err := database.Close(); err != nil {
@@ -68,12 +68,9 @@ func runReceiverOnly(args []string) error {
 
 	fanout, err := buildFanout()
 	if err != nil {
-		return err
+		return 1, err
 	}
 	defer func() {
-		if fanout == nil {
-			return
-		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		fanout.Shutdown(shutdownCtx)
@@ -85,20 +82,45 @@ func runReceiverOnly(args []string) error {
 
 	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler, metricsHandler, logsHandler)
 	if err != nil {
-		return err
+		return 1, err
 	}
-	log.Printf("OTLP gRPC receiver listening — traces + metrics + logs on %s", *grpcAddr)
-	log.Printf("Fan-out: jaeger OTLP -> %s", jaegerOTLPEndpoint)
-	log.Printf("Fan-out: prometheus exporter -> %s", prometheusExporterAddr)
-	log.Printf("Fan-out: loki -> %s", lokiEndpoint)
-	log.Printf("Waiting for telemetry... (Ctrl+C to stop)")
+	defer srv.Stop()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	endpoint := grpcAddrToEndpoint(*grpcAddr)
+	env := launcher.BuildEnv(launcher.Config{
+		Endpoint:    endpoint,
+		ServiceName: *service,
+	})
 
-	srv.Stop()
-	return nil
+	log.Printf("otelkit: receiver on %s → spawning: %s", *grpcAddr, strings.Join(childArgs, " "))
+
+	code, err := launcher.Run(context.Background(), childArgs, env)
+	if err != nil {
+		return 1, err
+	}
+	return code, nil
+}
+
+// splitOnDashDash splits args on the first "--" separator.
+// Returns everything before "--" as flagArgs and everything after as childArgs.
+// If "--" is not present, all args are flagArgs and childArgs is nil.
+func splitOnDashDash(args []string) (flagArgs, childArgs []string) {
+	for i, a := range args {
+		if a == "--" {
+			return args[:i], args[i+1:]
+		}
+	}
+	return args, nil
+}
+
+// grpcAddrToEndpoint converts a listen address to a localhost connect address.
+// ":4317" → "localhost:4317"
+// "0.0.0.0:4317" → "localhost:4317"
+func grpcAddrToEndpoint(addr string) string {
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		return "localhost" + addr[idx:]
+	}
+	return addr
 }
 
 func buildFanout() (*export.Fanout, error) {
@@ -106,17 +128,15 @@ func buildFanout() (*export.Fanout, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	prometheus, err := export.NewPrometheusExporter(prometheusExporterAddr)
 	if err != nil {
 		return nil, err
 	}
-
 	loki := export.NewLokiExporter(lokiEndpoint)
 
-	traces := []export.TraceExporter{jaeger}
-	metrics := []export.MetricsExporter{prometheus}
-	logs := []export.LogsExporter{loki}
-
-	return export.NewFanout(traces, metrics, logs), nil
+	return export.NewFanout(
+		[]export.TraceExporter{jaeger},
+		[]export.MetricsExporter{prometheus},
+		[]export.LogsExporter{loki},
+	), nil
 }

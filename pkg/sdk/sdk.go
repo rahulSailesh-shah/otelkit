@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+	"github.com/rahulSailesh-shah/otelkit/pkg/otelkitlog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -142,7 +142,7 @@ func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
 	))
 
 	// --- Logger ---
-	handler := otelslog.NewHandler(c.serviceName, otelslog.WithLoggerProvider(lp))
+	handler := otelkitlog.NewHandler(lp)
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelInfo).Writer())

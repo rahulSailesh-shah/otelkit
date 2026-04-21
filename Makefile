@@ -25,10 +25,10 @@ run:
 	cd cmd/otelkit && go run . run
 
 infra-up:
-	docker compose -f infra/docker-compose.yml up -d
+	podman compose -f infra/docker-compose.yml up -d
 
 infra-down:
-	docker compose -f infra/docker-compose.yml down
+	podman compose -f infra/docker-compose.yml down -v
 
 migrate-up:
 	@echo "Running migrations..."
@@ -38,9 +38,9 @@ migrate-down:
 	@echo "Rolling back migration..."
 	@goose -dir $(MIGRATIONS_DIR) sqlite3 $(DB_FILE) down
 
-migrate-status:
-	@echo "Migration status..."
-	@goose -dir $(MIGRATIONS_DIR) sqlite3 $(DB_FILE) status
+docker-down:
+	@echo "Stopping Docker..."
+	@podman compose -f infra/docker-compose.yml down -v
 
 sqlc-gen:
 	@echo "Generating sqlc..."
