@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -16,15 +17,13 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 )
 
-// TodoHandler handles todo-related HTTP requests
 type TodoHandler struct {
 	repo     repository.Repository
 	external ExternalClient
 	tracer   trace.Tracer
-	logger   *zap.Logger
+	logger   *slog.Logger
 	meter    metric.Meter
 
 	requestCounter     metric.Int64Counter
@@ -32,13 +31,11 @@ type TodoHandler struct {
 	dbOperationCounter metric.Int64Counter
 }
 
-// ExternalClient defines the interface for external API calls
 type ExternalClient interface {
 	GetTodo(ctx context.Context, id int64) (*models.Todo, error)
 }
 
-// NewTodoHandler creates a new todo handler
-func NewTodoHandler(repo repository.Repository, external ExternalClient, logger *zap.Logger, meter metric.Meter) *TodoHandler {
+func NewTodoHandler(repo repository.Repository, external ExternalClient, logger *slog.Logger, meter metric.Meter) *TodoHandler {
 	tracer := otel.Tracer("todo-handler")
 
 	requestCounter, err := meter.Int64Counter(
@@ -46,7 +43,7 @@ func NewTodoHandler(repo repository.Repository, external ExternalClient, logger 
 		metric.WithDescription("Total number of HTTP requests"),
 	)
 	if err != nil {
-		logger.Error("Failed to create request counter", zap.Error(err))
+		logger.Error("Failed to create request counter", "error", err)
 	}
 
 	requestDuration, err := meter.Float64Histogram(
@@ -54,7 +51,7 @@ func NewTodoHandler(repo repository.Repository, external ExternalClient, logger 
 		metric.WithDescription("HTTP request duration in seconds"),
 	)
 	if err != nil {
-		logger.Error("Failed to create request duration histogram", zap.Error(err))
+		logger.Error("Failed to create request duration histogram", "error", err)
 	}
 
 	dbOperationCounter, err := meter.Int64Counter(
@@ -62,7 +59,7 @@ func NewTodoHandler(repo repository.Repository, external ExternalClient, logger 
 		metric.WithDescription("Total number of database operations"),
 	)
 	if err != nil {
-		logger.Error("Failed to create db operation counter", zap.Error(err))
+		logger.Error("Failed to create db operation counter", "error", err)
 	}
 
 	return &TodoHandler{
@@ -77,22 +74,6 @@ func NewTodoHandler(repo repository.Repository, external ExternalClient, logger 
 	}
 }
 
-// logToBoth logs to both zap (terminal) and OpenTelemetry (Collector)
-func (h *TodoHandler) logToBoth(ctx context.Context, level string, message string, fields ...zap.Field) {
-	// Log to zap (terminal)
-	switch level {
-	case "debug":
-		h.logger.Debug(message, fields...)
-	case "info":
-		h.logger.Info(message, fields...)
-	case "warn":
-		h.logger.Warn(message, fields...)
-	case "error":
-		h.logger.Error(message, fields...)
-	}
-}
-
-// CreateTodo handles POST /todos
 func (h *TodoHandler) CreateTodo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -147,9 +128,9 @@ func (h *TodoHandler) CreateTodo(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("status", http.StatusCreated),
 	))
 
-	h.logToBoth(ctx, "info", fmt.Sprintf("Todo created: ID=%d, Title=%s", todo.ID, todo.Title),
-		zap.Int64("id", todo.ID),
-		zap.String("title", todo.Title),
+	h.logger.InfoContext(ctx, fmt.Sprintf("Todo created: ID=%d, Title=%s", todo.ID, todo.Title),
+		"id", todo.ID,
+		"title", todo.Title,
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -157,7 +138,6 @@ func (h *TodoHandler) CreateTodo(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(todo)
 }
 
-// GetTodo handles GET /todos/{id}
 func (h *TodoHandler) GetTodo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ctx, span := h.tracer.Start(ctx, "GetTodo")
@@ -180,7 +160,6 @@ func (h *TodoHandler) GetTodo(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int64("todo.id", id))
 
-	// Create database operation span
 	ctx, dbSpan := h.tracer.Start(ctx, "database.get",
 		trace.WithAttributes(attribute.String("operation", "get")),
 	)
@@ -204,17 +183,16 @@ func (h *TodoHandler) GetTodo(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("status", http.StatusOK),
 	))
 
-	h.logToBoth(ctx, "info", fmt.Sprintf("Todo retrieved: ID=%d", todo.ID),
-		zap.Int64("id", todo.ID),
-		zap.String("title", todo.Title),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	h.logger.InfoContext(ctx, fmt.Sprintf("Todo retrieved: ID=%d", todo.ID),
+		"id", todo.ID,
+		"title", todo.Title,
+		"trace_id", span.SpanContext().TraceID().String(),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(todo)
 }
 
-// ListTodos handles GET /todos
 func (h *TodoHandler) ListTodos(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -226,7 +204,6 @@ func (h *TodoHandler) ListTodos(w http.ResponseWriter, r *http.Request) {
 		))
 	}()
 
-	// Parse query parameters
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
 
@@ -256,15 +233,14 @@ func (h *TodoHandler) ListTodos(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("status", http.StatusOK),
 	))
 
-	h.logToBoth(ctx, "info", fmt.Sprintf("Todos listed: count=%d", len(todos)),
-		zap.Int("count", len(todos)),
+	h.logger.InfoContext(ctx, fmt.Sprintf("Todos listed: count=%d", len(todos)),
+		"count", len(todos),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(todos)
 }
 
-// UpdateTodo handles PUT /todos/{id}
 func (h *TodoHandler) UpdateTodo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ctx, span := h.tracer.Start(ctx, "UpdateTodo")
@@ -293,7 +269,6 @@ func (h *TodoHandler) UpdateTodo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get existing todo
 	ctx, dbSpan := h.tracer.Start(ctx, "database.get",
 		trace.WithAttributes(attribute.String("operation", "get")),
 	)
@@ -312,7 +287,6 @@ func (h *TodoHandler) UpdateTodo(w http.ResponseWriter, r *http.Request) {
 		attribute.String("table", "todos"),
 	))
 
-	// Update fields
 	if req.Title != nil {
 		todo.Title = *req.Title
 	}
@@ -320,7 +294,6 @@ func (h *TodoHandler) UpdateTodo(w http.ResponseWriter, r *http.Request) {
 		todo.Completed = *req.Completed
 	}
 
-	// Update database
 	ctx, updateSpan := h.tracer.Start(ctx, "database.update",
 		trace.WithAttributes(attribute.String("operation", "update")),
 	)
@@ -343,17 +316,16 @@ func (h *TodoHandler) UpdateTodo(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("status", http.StatusOK),
 	))
 
-	h.logToBoth(ctx, "info", fmt.Sprintf("Todo updated: ID=%d", todo.ID),
-		zap.Int64("id", todo.ID),
-		zap.String("title", todo.Title),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	h.logger.InfoContext(ctx, fmt.Sprintf("Todo updated: ID=%d", todo.ID),
+		"id", todo.ID,
+		"title", todo.Title,
+		"trace_id", span.SpanContext().TraceID().String(),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(todo)
 }
 
-// DeleteTodo handles DELETE /todos/{id}
 func (h *TodoHandler) DeleteTodo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ctx, span := h.tracer.Start(ctx, "DeleteTodo")
@@ -376,7 +348,6 @@ func (h *TodoHandler) DeleteTodo(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int64("todo.id", id))
 
-	// Create database operation span
 	ctx, dbSpan := h.tracer.Start(ctx, "database.delete",
 		trace.WithAttributes(attribute.String("operation", "delete")),
 	)
@@ -399,15 +370,14 @@ func (h *TodoHandler) DeleteTodo(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("status", http.StatusNoContent),
 	))
 
-	h.logToBoth(ctx, "info", fmt.Sprintf("Todo deleted: ID=%d", id),
-		zap.Int64("id", id),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	h.logger.InfoContext(ctx, fmt.Sprintf("Todo deleted: ID=%d", id),
+		"id", id,
+		"trace_id", span.SpanContext().TraceID().String(),
 	)
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GetExternalTodo handles GET /todos/external/{id}
 func (h *TodoHandler) GetExternalTodo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ctx, span := h.tracer.Start(ctx, "GetExternalTodo")
@@ -430,7 +400,6 @@ func (h *TodoHandler) GetExternalTodo(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int64("todo.id", id))
 
-	// Create external API call span
 	ctx, externalSpan := h.tracer.Start(ctx, "external_api.get_todo",
 		trace.WithAttributes(
 			attribute.String("endpoint", "jsonplaceholder.typicode.com"),
@@ -453,17 +422,16 @@ func (h *TodoHandler) GetExternalTodo(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("status", http.StatusOK),
 	))
 
-	h.logToBoth(ctx, "info", fmt.Sprintf("External todo fetched: ID=%d", todo.ID),
-		zap.Int64("id", todo.ID),
-		zap.String("title", todo.Title),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	h.logger.InfoContext(ctx, fmt.Sprintf("External todo fetched: ID=%d", todo.ID),
+		"id", todo.ID,
+		"title", todo.Title,
+		"trace_id", span.SpanContext().TraceID().String(),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(todo)
 }
 
-// handleError handles errors consistently with telemetry
 func (h *TodoHandler) handleError(w http.ResponseWriter, r *http.Request, span trace.Span, message string, err error, statusCode int) {
 	span.RecordError(err)
 	span.SetStatus(codes.Error, message)
@@ -474,10 +442,10 @@ func (h *TodoHandler) handleError(w http.ResponseWriter, r *http.Request, span t
 		attribute.Int("status", statusCode),
 	))
 
-	h.logToBoth(r.Context(), "error", message,
-		zap.Error(err),
-		zap.Int("status", statusCode),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	h.logger.ErrorContext(r.Context(), message,
+		"error", err,
+		"status", statusCode,
+		"trace_id", span.SpanContext().TraceID().String(),
 	)
 
 	w.Header().Set("Content-Type", "application/json")

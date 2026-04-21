@@ -20,6 +20,15 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--enable-feature=otlp-write-receiver"
 
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: otelkit-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml
+
   grafana:
     image: grafana/grafana:latest
     container_name: otelkit-grafana
@@ -33,3 +42,5 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
+      - loki
+      - jaeger

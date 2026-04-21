@@ -4,6 +4,20 @@
 
 package repo
 
+type LogRecord struct {
+	ID            int64   `json:"id"`
+	TraceID       *string `json:"trace_id"`
+	SpanID        *string `json:"span_id"`
+	ServiceName   string  `json:"service_name"`
+	Severity      *int64  `json:"severity"`
+	SeverityText  *string `json:"severity_text"`
+	Body          *string `json:"body"`
+	Attributes    *string `json:"attributes"`
+	ResourceAttrs *string `json:"resource_attrs"`
+	TimestampNs   int64   `json:"timestamp_ns"`
+	IngestedAt    int64   `json:"ingested_at"`
+}
+
 type MetricPoint struct {
 	ID            int64    `json:"id"`
 	Name          string   `json:"name"`

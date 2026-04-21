@@ -2,9 +2,11 @@ package otelkitlog
 
 import (
 	"log/slog"
-	"os"
+
+	"go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/otel/log"
 )
 
-func NewHandler() slog.Handler {
-	return slog.NewJSONHandler(os.Stdout, nil)
+func NewHandler(lp log.LoggerProvider) slog.Handler {
+	return otelslog.NewHandler("otelkit", otelslog.WithLoggerProvider(lp))
 }

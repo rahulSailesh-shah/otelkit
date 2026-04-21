@@ -6,24 +6,23 @@ import (
 	"sync"
 	"time"
 
+	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 )
+
 
 const defaultExportTimeout = 5 * time.Second
 
 type Fanout struct {
 	traces  []TraceExporter
 	metrics []MetricsExporter
+	logs    []LogsExporter
 	timeout time.Duration
 }
 
-func NewFanout(exporters ...TraceExporter) *Fanout {
-	return &Fanout{traces: exporters, timeout: defaultExportTimeout}
-}
-
-func NewFanoutWithMetrics(traces []TraceExporter, metrics []MetricsExporter) *Fanout {
-	return &Fanout{traces: traces, metrics: metrics, timeout: defaultExportTimeout}
+func NewFanout(traces []TraceExporter, metrics []MetricsExporter, logs []LogsExporter) *Fanout {
+	return &Fanout{traces: traces, metrics: metrics, logs: logs, timeout: defaultExportTimeout}
 }
 
 func (f *Fanout) WithTimeout(d time.Duration) *Fanout {
@@ -71,6 +70,26 @@ func (f *Fanout) ExportMetrics(ctx context.Context, req *colmetricspb.ExportMetr
 	wg.Wait()
 }
 
+func (f *Fanout) ExportLogs(ctx context.Context, req *collogspb.ExportLogsServiceRequest) {
+	if f == nil || len(f.logs) == 0 || req == nil {
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, exp := range f.logs {
+		wg.Add(1)
+		go func(e LogsExporter) {
+			defer wg.Done()
+			callCtx, cancel := context.WithTimeout(ctx, f.timeout)
+			defer cancel()
+			if err := e.ExportLogs(callCtx, req); err != nil {
+				log.Printf("exporter %s: %v", e.Name(), err)
+			}
+		}(exp)
+	}
+	wg.Wait()
+}
+
 func (f *Fanout) Shutdown(ctx context.Context) {
 	if f == nil {
 		return
@@ -81,6 +100,11 @@ func (f *Fanout) Shutdown(ctx context.Context) {
 		}
 	}
 	for _, exp := range f.metrics {
+		if err := exp.Shutdown(ctx); err != nil {
+			log.Printf("shutdown exporter %s: %v", exp.Name(), err)
+		}
+	}
+	for _, exp := range f.logs {
 		if err := exp.Shutdown(ctx); err != nil {
 			log.Printf("shutdown exporter %s: %v", exp.Name(), err)
 		}

@@ -23,6 +23,9 @@ const jaegerOTLPEndpoint = "localhost:14317"
 // Prometheus exporter endpoint
 const prometheusExporterAddr = ":9091"
 
+// Loki endpoint
+const lokiEndpoint = "http://localhost:3100"
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "error: no command provided\n")
@@ -78,14 +81,17 @@ func runReceiverOnly(args []string) error {
 
 	traceHandler := receiver.NewTraceHandler(queries, fanout)
 	metricsHandler := receiver.NewMetricsHandler(queries, fanout)
-	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler, metricsHandler)
+	logsHandler := receiver.NewLogsHandler(queries, fanout)
+
+	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler, metricsHandler, logsHandler)
 	if err != nil {
 		return err
 	}
-	log.Printf("OTLP gRPC receiver listening — traces + metrics on %s", *grpcAddr)
+	log.Printf("OTLP gRPC receiver listening — traces + metrics + logs on %s", *grpcAddr)
 	log.Printf("Fan-out: jaeger OTLP -> %s", jaegerOTLPEndpoint)
 	log.Printf("Fan-out: prometheus exporter -> %s", prometheusExporterAddr)
-	log.Printf("Waiting for spans and metrics... (Ctrl+C to stop)")
+	log.Printf("Fan-out: loki -> %s", lokiEndpoint)
+	log.Printf("Waiting for telemetry... (Ctrl+C to stop)")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -106,8 +112,11 @@ func buildFanout() (*export.Fanout, error) {
 		return nil, err
 	}
 
+	loki := export.NewLokiExporter(lokiEndpoint)
+
 	traces := []export.TraceExporter{jaeger}
 	metrics := []export.MetricsExporter{prometheus}
+	logs := []export.LogsExporter{loki}
 
-	return export.NewFanoutWithMetrics(traces, metrics), nil
+	return export.NewFanout(traces, metrics, logs), nil
 }
