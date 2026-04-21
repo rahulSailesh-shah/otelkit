@@ -16,10 +16,6 @@ import (
 	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
-const jaegerOTLPEndpoint = "localhost:14317"
-const prometheusExporterAddr = ":9091"
-const lokiEndpoint = "http://localhost:3100"
-
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "usage: %s <command>\navailable commands: run, version\n", os.Args[0])
@@ -47,10 +43,22 @@ func runLauncher(args []string) (int, error) {
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 	grpcAddr := runCmd.String("grpc-addr", ":4317", "OTLP gRPC listen address")
 	service := runCmd.String("service", "", "service name injected as OTEL_SERVICE_NAME")
+
+	// ── Grafana stack
+	jaegerAddr := runCmd.String("jaeger-addr", "", "Jaeger OTLP gRPC address (e.g. localhost:14317); empty = disabled")
+	prometheusAddr := runCmd.String("prometheus-addr", "", "Prometheus metrics listen addr (e.g. :9091); empty = disabled")
+	lokiAddr := runCmd.String("loki-addr", "", "Loki push API URL (e.g. http://localhost:3100); empty = disabled")
+
+	// ── SigNoz metrics, logs, traces all in one
+	signozAddr := runCmd.String("signoz-addr", "", "SigNoz OTLP gRPC address (e.g. localhost:24317); empty = disabled")
+
 	runCmd.Parse(flagArgs)
 
 	if len(childArgs) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: otelkit run [--grpc-addr :4317] [--service <name>] -- <command> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: otelkit run [flags] -- <command> [args...]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "flags:")
+		runCmd.PrintDefaults()
 		return 2, nil
 	}
 
@@ -66,7 +74,12 @@ func runLauncher(args []string) (int, error) {
 
 	queries := repo.New(database.GetDB())
 
-	fanout, err := buildFanout()
+	fanout, err := buildFanout(fanoutConfig{
+		jaegerAddr:     *jaegerAddr,
+		prometheusAddr: *prometheusAddr,
+		lokiAddr:       *lokiAddr,
+		signozAddr:     *signozAddr,
+	})
 	if err != nil {
 		return 1, err
 	}
@@ -101,9 +114,51 @@ func runLauncher(args []string) (int, error) {
 	return code, nil
 }
 
-// splitOnDashDash splits args on the first "--" separator.
-// Returns everything before "--" as flagArgs and everything after as childArgs.
-// If "--" is not present, all args are flagArgs and childArgs is nil.
+type fanoutConfig struct {
+	jaegerAddr     string
+	prometheusAddr string
+	lokiAddr       string
+	signozAddr     string
+}
+
+func buildFanout(cfg fanoutConfig) (*export.Fanout, error) {
+	var traceExporters []export.TraceExporter
+	var metricsExporters []export.MetricsExporter
+	var logsExporters []export.LogsExporter
+
+	if cfg.jaegerAddr != "" {
+		jaeger, err := export.NewJaegerExporter(cfg.jaegerAddr)
+		if err != nil {
+			return nil, err
+		}
+		traceExporters = append(traceExporters, jaeger)
+	}
+
+	if cfg.prometheusAddr != "" {
+		prometheus, err := export.NewPrometheusExporter(cfg.prometheusAddr)
+		if err != nil {
+			return nil, err
+		}
+		metricsExporters = append(metricsExporters, prometheus)
+	}
+
+	if cfg.lokiAddr != "" {
+		logsExporters = append(logsExporters, export.NewLokiExporter(cfg.lokiAddr))
+	}
+
+	if cfg.signozAddr != "" {
+		signoz, err := export.NewSigNozExporter(cfg.signozAddr)
+		if err != nil {
+			return nil, err
+		}
+		traceExporters = append(traceExporters, signoz)
+		metricsExporters = append(metricsExporters, signoz)
+		logsExporters = append(logsExporters, signoz)
+	}
+
+	return export.NewFanout(traceExporters, metricsExporters, logsExporters), nil
+}
+
 func splitOnDashDash(args []string) (flagArgs, childArgs []string) {
 	for i, a := range args {
 		if a == "--" {
@@ -113,30 +168,9 @@ func splitOnDashDash(args []string) (flagArgs, childArgs []string) {
 	return args, nil
 }
 
-// grpcAddrToEndpoint converts a listen address to a localhost connect address.
-// ":4317" → "localhost:4317"
-// "0.0.0.0:4317" → "localhost:4317"
 func grpcAddrToEndpoint(addr string) string {
 	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
 		return "localhost" + addr[idx:]
 	}
 	return addr
-}
-
-func buildFanout() (*export.Fanout, error) {
-	jaeger, err := export.NewJaegerExporter(jaegerOTLPEndpoint)
-	if err != nil {
-		return nil, err
-	}
-	prometheus, err := export.NewPrometheusExporter(prometheusExporterAddr)
-	if err != nil {
-		return nil, err
-	}
-	loki := export.NewLokiExporter(lokiEndpoint)
-
-	return export.NewFanout(
-		[]export.TraceExporter{jaeger},
-		[]export.MetricsExporter{prometheus},
-		[]export.LogsExporter{loki},
-	), nil
 }

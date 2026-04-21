@@ -1,19 +1,36 @@
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │  Grafana stack  —  separate backends wired together in Grafana              │
+# │                                                                             │
+# │  Components:  Jaeger (traces)  Prometheus (metrics)  Loki (logs)            │
+# │               Grafana (unified UI across all three)                         │
+# │                                                                             │
+# │  Start:   make grafana-up                                                   │
+# │  Stop:    make grafana-down                                                 │
+# │  Run:     make run-grafana SERVICE=my-api CMD="./my-api"                   │
+# │                                                                             │
+# │  UIs:  Jaeger     http://localhost:16686                                    │
+# │        Prometheus http://localhost:9090                                     │
+# │        Grafana    http://localhost:3000  (admin / admin)                    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
 services:
   jaeger:
     image: jaegertracing/all-in-one:1.58
     container_name: otelkit-jaeger
+    profiles: [grafana]
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     ports:
       - "16686:16686" # Jaeger UI
-      - "14317:4317" # OTLP gRPC
-      - "14318:4318" # OTLP HTTP
+      - "14317:4317"  # OTLP gRPC  (otelkit forwards traces here)
+      - "14318:4318"  # OTLP HTTP
 
   prometheus:
     image: prom/prometheus:latest
     container_name: otelkit-prometheus
+    profiles: [grafana]
     ports:
-      - "9090:9090" # Prometheus UI
+      - "9090:9090"   # Prometheus UI
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     command:
@@ -23,8 +40,9 @@ services:
   loki:
     image: grafana/loki:2.9.0
     container_name: otelkit-loki
+    profiles: [grafana]
     ports:
-      - "3100:3100"
+      - "3100:3100"   # Loki push API  (otelkit forwards logs here)
     volumes:
       - ./loki-config.yaml:/etc/loki/local-config.yaml
     command: -config.file=/etc/loki/local-config.yaml
@@ -32,8 +50,9 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: otelkit-grafana
+    profiles: [grafana]
     ports:
-      - "3000:3000" # Grafana UI
+      - "3000:3000"   # Grafana UI
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
@@ -44,3 +63,8 @@ services:
       - prometheus
       - loki
       - jaeger
+
+# SigNoz stack lives in infra/signoz/docker-compose.yml — it requires
+# ZooKeeper, ClickHouse config files, and a histogram binary init step
+# that make it too complex to embed here as profiles.
+# Use: make signoz-up / make signoz-down
