@@ -9,8 +9,7 @@ import (
 )
 
 type globalOptions struct {
-	DBPath   string
-	LogLevel string
+	DBPath string
 }
 
 var globalOpts globalOptions
@@ -25,7 +24,6 @@ func newRootCmd() *cobra.Command {
 	}
 
 	cmd.PersistentFlags().StringVar(&globalOpts.DBPath, "db", "otelkit.db", "path to SQLite database")
-	cmd.PersistentFlags().StringVar(&globalOpts.LogLevel, "log-level", "info", "log level (debug, info, warn, error)")
 
 	cmd.AddCommand(newRunCmd(), newDashCmd(), newVersionCmd())
 	return cmd

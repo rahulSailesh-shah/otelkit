@@ -7,7 +7,7 @@ func TestRootCmdWiring(t *testing.T) {
 	if cmd.Use != "otelkit" {
 		t.Fatalf("Use = %q, want %q", cmd.Use, "otelkit")
 	}
-	for _, name := range []string{"db", "log-level"} {
+	for _, name := range []string{"db"} {
 		if f := cmd.PersistentFlags().Lookup(name); f == nil {
 			t.Errorf("persistent flag --%s missing", name)
 		}
