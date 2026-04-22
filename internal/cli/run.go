@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/rahulSailesh-shah/otelkit/internal/launcher"
 	"github.com/rahulSailesh-shah/otelkit/internal/receiver"
 	"github.com/rahulSailesh-shah/otelkit/internal/store/db"
+	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
+	"github.com/rahulSailesh-shah/otelkit/internal/tui"
 )
 
 type runOptions struct {
@@ -46,7 +49,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.LokiAddr, "loki-addr", "", "Loki push API URL (e.g. http://localhost:3100)")
 	f.StringVar(&opts.SigNozAddr, "signoz-addr", "", "SigNoz OTLP gRPC address (e.g. localhost:24317)")
 
-	f.BoolVar(&opts.TUI, "tui", false, "run TUI dashboard alongside child (deferred wiring)")
+	f.BoolVar(&opts.TUI, "tui", false, "run TUI dashboard alongside child")
 	f.StringVar(&opts.ChildLog, "child-log", "", "path for child stdout/stderr when --tui is set (default: temp file)")
 	f.DurationVar(&opts.Refresh, "refresh", 2*time.Second, "TUI refresh interval")
 
@@ -94,6 +97,10 @@ func runExecute(ctx context.Context, opts runOptions, childArgs []string) error 
 	endpoint := grpcAddrToEndpoint(opts.GRPCAddr)
 	env := launcher.BuildEnv(launcher.Config{Endpoint: endpoint, ServiceName: opts.Service})
 
+	if opts.TUI {
+		return runWithTUI(ctx, opts, childArgs, env, database)
+	}
+
 	log.Printf("otelkit: receiver on %s -> spawning: %s", opts.GRPCAddr, strings.Join(childArgs, " "))
 
 	code, err := launcher.Run(ctx, childArgs, env, launcher.IOConfig{})
@@ -104,6 +111,58 @@ func runExecute(ctx context.Context, opts runOptions, childArgs []string) error 
 		return fmt.Errorf("child exited with code %d", code)
 	}
 	return nil
+}
+
+func runWithTUI(ctx context.Context, opts runOptions, childArgs []string, env []string, database db.DB) error {
+	logPath := opts.ChildLog
+	if logPath == "" {
+		f, err := os.CreateTemp("", "otelkit-child-*.log")
+		if err != nil {
+			return fmt.Errorf("create temp log: %w", err)
+		}
+		logPath = f.Name()
+		_ = f.Close()
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("open child log: %w", err)
+	}
+	defer logFile.Close()
+
+	tuiCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	childErrCh := make(chan error, 1)
+	go func() {
+		code, err := launcher.Run(tuiCtx, childArgs, env, launcher.IOConfig{
+			Stdout: logFile,
+			Stderr: logFile,
+		})
+		if err != nil {
+			childErrCh <- err
+			return
+		}
+		if code != 0 {
+			childErrCh <- fmt.Errorf("child exited with code %d", code)
+			return
+		}
+		childErrCh <- nil
+	}()
+
+	queries := repo.New(database.GetReadDB())
+	tuiErr := tui.Run(tuiCtx, tui.Options{
+		Queries:         queries,
+		RefreshInterval: opts.Refresh,
+		ChildLogPath:    logPath,
+	})
+
+	cancel() // stop child if TUI exited first
+	childErr := <-childErrCh
+
+	if tuiErr != nil {
+		return tuiErr
+	}
+	return childErr
 }
 
 func grpcAddrToEndpoint(addr string) string {
