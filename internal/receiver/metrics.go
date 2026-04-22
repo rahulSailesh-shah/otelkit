@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log"
 	"time"
@@ -22,30 +23,42 @@ const (
 )
 
 type MetricsHandler struct {
-	repo   *repo.Queries
+	db     *sql.DB
 	fanout *export.Fanout
 	colmetricspb.UnimplementedMetricsServiceServer
 }
 
-func NewMetricsHandler(repo *repo.Queries, fanout *export.Fanout) *MetricsHandler {
-	return &MetricsHandler{repo: repo, fanout: fanout}
+func NewMetricsHandler(db *sql.DB, fanout *export.Fanout) *MetricsHandler {
+	return &MetricsHandler{db: db, fanout: fanout}
 }
 
 func (h *MetricsHandler) Export(
 	ctx context.Context,
 	req *colmetricspb.ExportMetricsServiceRequest,
 ) (*colmetricspb.ExportMetricsServiceResponse, error) {
-	params, err := normalizeMetrics(req)
+	metrics, err := normalizeMetrics(req)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "normalize metrics: %v", err)
 	}
 
-	log.Println("[metric] received", len(params), "metric points")
+	log.Println("[metric] received", len(metrics), "metric points")
 
-	for _, p := range params {
-		if err := h.repo.InsertMetricPoint(ctx, p); err != nil {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
+	}
+	defer tx.Rollback()
+
+	q := repo.New(tx)
+	for _, m := range metrics {
+		if err := q.InsertMetricPoint(ctx, m); err != nil {
 			log.Printf("[metric] failed to insert metric point: %v", err)
+			return nil, status.Errorf(codes.Internal, "insert metric: %v", err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit tx: %v", err)
 	}
 
 	if h.fanout != nil {

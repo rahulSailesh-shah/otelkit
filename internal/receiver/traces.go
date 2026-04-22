@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -9,7 +10,7 @@ import (
 	"time"
 
 	"github.com/rahulSailesh-shah/otelkit/internal/export"
-	repo "github.com/rahulSailesh-shah/otelkit/internal/store/repo"
+	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
@@ -17,13 +18,13 @@ import (
 )
 
 type TraceHandler struct {
-	repo   *repo.Queries
+	db     *sql.DB
 	fanout *export.Fanout
 	coltracepb.UnimplementedTraceServiceServer
 }
 
-func NewTraceHandler(repo *repo.Queries, fanout *export.Fanout) *TraceHandler {
-	return &TraceHandler{repo: repo, fanout: fanout}
+func NewTraceHandler(db *sql.DB, fanout *export.Fanout) *TraceHandler {
+	return &TraceHandler{db: db, fanout: fanout}
 }
 
 func (h *TraceHandler) Export(
@@ -37,11 +38,22 @@ func (h *TraceHandler) Export(
 
 	log.Println("[trace] received", len(spans), "spans")
 
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	q := repo.New(tx)
 	for _, s := range spans {
-		if err := h.repo.InsertSpan(ctx, s); err != nil {
+		if err := q.InsertSpan(ctx, s); err != nil {
 			log.Printf("[trace] insert span: %v", err)
 			return nil, err
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	if h.fanout != nil {

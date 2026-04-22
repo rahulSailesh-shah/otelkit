@@ -13,7 +13,6 @@ import (
 	"github.com/rahulSailesh-shah/otelkit/internal/launcher"
 	"github.com/rahulSailesh-shah/otelkit/internal/receiver"
 	"github.com/rahulSailesh-shah/otelkit/internal/store/db"
-	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
 func main() {
@@ -62,7 +61,7 @@ func runLauncher(args []string) (int, error) {
 		return 2, nil
 	}
 
-	database := db.NewSQLiteDB(context.Background())
+	database := db.NewSQLiteDB(context.Background(), "otelkit.db")
 	if err := database.Connect(); err != nil {
 		return 1, err
 	}
@@ -72,7 +71,7 @@ func runLauncher(args []string) (int, error) {
 		}
 	}()
 
-	queries := repo.New(database.GetDB())
+	writeDB := database.GetWriteDB()
 
 	fanout, err := buildFanout(fanoutConfig{
 		jaegerAddr:     *jaegerAddr,
@@ -89,9 +88,9 @@ func runLauncher(args []string) (int, error) {
 		fanout.Shutdown(shutdownCtx)
 	}()
 
-	traceHandler := receiver.NewTraceHandler(queries, fanout)
-	metricsHandler := receiver.NewMetricsHandler(queries, fanout)
-	logsHandler := receiver.NewLogsHandler(queries, fanout)
+	traceHandler := receiver.NewTraceHandler(writeDB, fanout)
+	metricsHandler := receiver.NewMetricsHandler(writeDB, fanout)
+	logsHandler := receiver.NewLogsHandler(writeDB, fanout)
 
 	srv, err := receiver.StartGRPC(*grpcAddr, traceHandler, metricsHandler, logsHandler)
 	if err != nil {

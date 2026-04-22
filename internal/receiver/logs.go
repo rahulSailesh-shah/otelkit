@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"time"
@@ -12,13 +13,13 @@ import (
 )
 
 type LogsHandler struct {
-	repo   *repo.Queries
+	db     *sql.DB
 	fanout *export.Fanout
 	collogspb.UnimplementedLogsServiceServer
 }
 
-func NewLogsHandler(repo *repo.Queries, fanout *export.Fanout) *LogsHandler {
-	return &LogsHandler{repo: repo, fanout: fanout}
+func NewLogsHandler(db *sql.DB, fanout *export.Fanout) *LogsHandler {
+	return &LogsHandler{db: db, fanout: fanout}
 }
 
 func (h *LogsHandler) Export(
@@ -32,10 +33,22 @@ func (h *LogsHandler) Export(
 
 	log.Println("[logs] received", len(params), "log records")
 
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	q := repo.New(tx)
 	for _, p := range params {
-		if err := h.repo.InsertLogRecord(ctx, p); err != nil {
+		if err := q.InsertLogRecord(ctx, p); err != nil {
 			log.Printf("[logs] insert log record: %v", err)
+			return nil, err
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	if h.fanout != nil {
