@@ -37,6 +37,3 @@ func Execute() error {
 	defer stop()
 	return newRootCmd().ExecuteContext(ctx)
 }
-
-// temporary stubs until subcommand files land
-func newDashCmd() *cobra.Command    { return &cobra.Command{Use: "dash"} }
