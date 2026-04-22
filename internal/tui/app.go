@@ -41,6 +41,13 @@ const (
 	viewDetail
 )
 
+type logsView int
+
+const (
+	viewLogList logsView = iota
+	viewLogDetail
+)
+
 type appModel struct {
 	ctx     context.Context
 	opts    Options
@@ -51,13 +58,15 @@ type appModel struct {
 
 	activeTab  tabID
 	tracesView tracesView
+	logsView   logsView
 	showHelp   bool
 
 	traces      tracesModel
 	waterfall   waterfallModel
 	detail      spanDetailModel
-	metrics     placeholderModel
-	logs        placeholderModel
+	metrics     metricsModel
+	logs        logsModel
+	logDetail   logDetailModel
 	procOut     procOutModel
 	hasProcOut  bool
 	lastTraceID string
@@ -72,9 +81,11 @@ func newAppModel(ctx context.Context, opts Options) appModel {
 		activeTab: tabTraces,
 		traces:    newTracesModel(),
 		detail:    newSpanDetailModel(),
-		metrics:   newPlaceholder("Metrics coming soon"),
-		logs:      newPlaceholder("Logs coming soon"),
+		metrics:   newMetricsModel(),
+		logs:      newLogsModel(),
+		logDetail: newLogDetailModel(),
 	}
+	m.metrics.setSource(ctx, opts.Queries)
 	if opts.ChildLogPath != "" {
 		m.procOut = newProcOutModel(opts.ChildLogPath)
 		m.hasProcOut = true
@@ -85,6 +96,8 @@ func newAppModel(ctx context.Context, opts Options) appModel {
 func (m appModel) Init() tea.Cmd {
 	return tea.Batch(
 		loadTracesCmd(m.ctx, m.queries, 100),
+		loadLogsCmd(m.ctx, m.queries, 200),
+		loadMetricNamesCmd(m.ctx, m.queries),
 		tickCmd(m.opts.RefreshInterval),
 	)
 }
@@ -108,6 +121,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tracesView = viewList
 				m.lastTraceID = ""
 			}
+			if prev == tabLogs && m.activeTab != tabLogs {
+				m.logsView = viewLogList
+			}
 			m = m.resize()
 			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.ShiftTab):
@@ -117,13 +133,24 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tracesView = viewList
 				m.lastTraceID = ""
 			}
+			if prev == tabLogs && m.activeTab != tabLogs {
+				m.logsView = viewLogList
+			}
 			m = m.resize()
 			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.Help):
 			m.showHelp = !m.showHelp
 			return m, nil
 		case key.Matches(msg, keys.Refresh):
-			return m, loadTracesCmd(m.ctx, m.queries, 100)
+			cmds := []tea.Cmd{
+				loadTracesCmd(m.ctx, m.queries, 100),
+				loadLogsCmd(m.ctx, m.queries, 200),
+				loadMetricNamesCmd(m.ctx, m.queries),
+			}
+			if name, ok := m.metrics.selectedName(); ok {
+				cmds = append(cmds, loadMetricSeriesCmd(m.ctx, m.queries, name, metricWindowSec))
+			}
+			return m, tea.Batch(cmds...)
 		}
 
 		if m.activeTab == tabTraces {
@@ -155,11 +182,35 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.activeTab == tabLogs {
+			switch {
+			case key.Matches(msg, keys.Enter):
+				if m.logsView == viewLogList {
+					if row, ok := m.logs.selectedLog(); ok {
+						m.logDetail.setLog(row)
+						m.logsView = viewLogDetail
+					}
+				}
+				return m, nil
+			case key.Matches(msg, keys.Back):
+				if m.logsView == viewLogDetail {
+					m.logsView = viewLogList
+				}
+				return m, nil
+			}
+		}
+
 	case tickMsg:
-		return m, tea.Batch(
+		cmds := []tea.Cmd{
 			loadTracesCmd(m.ctx, m.queries, 100),
+			loadLogsCmd(m.ctx, m.queries, 200),
+			loadMetricNamesCmd(m.ctx, m.queries),
 			tickCmd(m.opts.RefreshInterval),
-		)
+		}
+		if name, ok := m.metrics.selectedName(); ok {
+			cmds = append(cmds, loadMetricSeriesCmd(m.ctx, m.queries, name, metricWindowSec))
+		}
+		return m, tea.Batch(cmds...)
 
 	case procOutTickMsg:
 		if m.hasProcOut && m.activeTab == tabProcOut {
@@ -187,6 +238,40 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.waterfall.setSpans(msg.Spans)
 		}
 		return m, nil
+
+	case logsLoadedMsg:
+		if msg.Err != nil {
+			m.lastErr = "logs load: " + msg.Err.Error()
+		} else {
+			m.lastErr = ""
+			m.logs.setRows(msg.Rows)
+		}
+		return m, nil
+
+	case metricNamesLoadedMsg:
+		if msg.Err != nil {
+			m.lastErr = "metric names load: " + msg.Err.Error()
+			return m, nil
+		}
+		prev, hadPrev := m.metrics.selectedName()
+		m.lastErr = ""
+		m.metrics.setNames(msg.Rows)
+		cur, hasCur := m.metrics.selectedName()
+		if hasCur && (!hadPrev || prev != cur) {
+			return m, loadMetricSeriesCmd(m.ctx, m.queries, cur, metricWindowSec)
+		}
+		return m, nil
+
+	case metricSeriesLoadedMsg:
+		if msg.Err != nil {
+			m.lastErr = "metric series load: " + msg.Err.Error()
+			return m, nil
+		}
+		if name, ok := m.metrics.selectedName(); ok && name == msg.Name {
+			m.lastErr = ""
+			m.metrics.setSeries(msg.Name, msg.Points, msg.Unit, msg.Type)
+		}
+		return m, nil
 	}
 
 	return m.updateActive(msg)
@@ -203,6 +288,15 @@ func (m appModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.waterfall, cmd = m.waterfall.Update(msg)
 		case viewDetail:
 			m.detail, cmd = m.detail.Update(msg)
+		}
+	case tabMetrics:
+		m.metrics, cmd = m.metrics.Update(msg)
+	case tabLogs:
+		switch m.logsView {
+		case viewLogList:
+			m.logs, cmd = m.logs.Update(msg)
+		case viewLogDetail:
+			m.logDetail, cmd = m.logDetail.Update(msg)
 		}
 	case tabProcOut:
 		if m.hasProcOut {
@@ -252,8 +346,9 @@ func (m appModel) resize() appModel {
 	m.traces.setSize(m.width, contentH)
 	m.waterfall.setSize(m.width, contentH)
 	m.detail.setSize(m.width, contentH)
-	m.metrics = m.metrics.setSize(m.width, contentH)
-	m.logs = m.logs.setSize(m.width, contentH)
+	m.metrics.setSize(m.width, contentH)
+	m.logs.setSize(m.width, contentH)
+	m.logDetail.setSize(m.width, contentH)
 	if m.hasProcOut {
 		m.procOut = m.procOut.setSize(m.width, contentH)
 	}
@@ -301,7 +396,12 @@ func (m appModel) viewActive() string {
 	case tabMetrics:
 		return m.metrics.View()
 	case tabLogs:
-		return m.logs.View()
+		switch m.logsView {
+		case viewLogList:
+			return m.logs.View()
+		case viewLogDetail:
+			return m.logDetail.View()
+		}
 	case tabProcOut:
 		if m.hasProcOut {
 			return m.procOut.View()
