@@ -246,3 +246,74 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, traceID string) ([]Span,
 	}
 	return items, nil
 }
+
+const listTraceSummaries = `-- name: ListTraceSummaries :many
+SELECT
+    trace_id                                             AS trace_id,
+    CAST(MIN(start_time_ns) AS INTEGER)                  AS start_time_ns,
+    CAST(MAX(end_time_ns) - MIN(start_time_ns) AS INTEGER) AS duration_ns,
+    CAST(COUNT(*) AS INTEGER)                            AS span_count,
+    CAST(MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END) AS INTEGER) AS has_errors,
+    (
+        SELECT s2.service_name FROM spans s2
+        WHERE s2.trace_id = spans.trace_id AND s2.parent_span_id IS NULL
+        LIMIT 1
+    )                                                    AS root_service,
+    (
+        SELECT s2.name FROM spans s2
+        WHERE s2.trace_id = spans.trace_id AND s2.parent_span_id IS NULL
+        LIMIT 1
+    )                                                    AS root_name
+FROM spans
+GROUP BY trace_id
+ORDER BY start_time_ns DESC
+LIMIT ? OFFSET ?
+`
+
+type ListTraceSummariesParams struct {
+	Limit  int64 `json:"limit"`
+	Offset int64 `json:"offset"`
+}
+
+type ListTraceSummariesRow struct {
+	TraceID     string `json:"trace_id"`
+	StartTimeNs int64  `json:"start_time_ns"`
+	DurationNs  int64  `json:"duration_ns"`
+	SpanCount   int64  `json:"span_count"`
+	HasErrors   int64  `json:"has_errors"`
+	RootService string `json:"root_service"`
+	RootName    string `json:"root_name"`
+}
+
+// Aggregates spans per trace_id for the TUI list view.
+// root_service/root_name come from the span with NULL parent_span_id (the root).
+func (q *Queries) ListTraceSummaries(ctx context.Context, arg ListTraceSummariesParams) ([]ListTraceSummariesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTraceSummaries, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTraceSummariesRow
+	for rows.Next() {
+		var i ListTraceSummariesRow
+		if err := rows.Scan(
+			&i.TraceID,
+			&i.StartTimeNs,
+			&i.DurationNs,
+			&i.SpanCount,
+			&i.HasErrors,
+			&i.RootService,
+			&i.RootName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
