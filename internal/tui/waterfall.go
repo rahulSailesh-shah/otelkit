@@ -114,7 +114,7 @@ func (m waterfallModel) Update(msg tea.Msg) (waterfallModel, tea.Cmd) {
 
 func (m waterfallModel) View() string {
 	if len(m.spans) == 0 {
-		return waterfallEmpty.Render("select a trace to see its waterfall")
+		return waterfallEmptyStyle.Render("select a trace to see its waterfall")
 	}
 	bars := layoutBars(m.spans, max(10, m.width-40))
 
@@ -124,7 +124,7 @@ func (m waterfallModel) View() string {
 		track := renderTrack(bars[i], max(10, m.width-40))
 		line := fmt.Sprintf("%s %s %s", label, track, fmtDuration(s.EndTimeNs-s.StartTimeNs))
 		if i == m.cursor {
-			line = waterfallCursor.Render(line)
+			line = waterfallCursorStyle.Render(line)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -139,7 +139,7 @@ func renderTrack(bar Bar, width int) string {
 	left := strings.Repeat(" ", bar.Offset)
 	filled := strings.Repeat("█", bar.Width)
 	right := strings.Repeat(" ", max(0, width-bar.Offset-bar.Width))
-	return left + stylesForBar(bar.Style).Render(filled) + right
+	return left + stylesForBarLG(bar.Style).Render(filled) + right
 }
 
 // selectedSpan returns the currently highlighted span, if any.
@@ -158,18 +158,6 @@ func (m *waterfallModel) setSpans(spans []repo.Span) {
 		m.cursor = 0
 	}
 }
-
-// temporary stubs until Task 10 lands — replaced by styles.go contents
-var (
-	waterfallEmpty  = stubStyle{}
-	waterfallCursor = stubStyle{}
-)
-
-type stubStyle struct{}
-
-func (stubStyle) Render(s ...string) string { return strings.Join(s, "") }
-
-func stylesForBar(_ BarStyle) stubStyle { return stubStyle{} }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
