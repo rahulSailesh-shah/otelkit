@@ -96,7 +96,7 @@ func runExecute(ctx context.Context, opts runOptions, childArgs []string) error 
 
 	log.Printf("otelkit: receiver on %s -> spawning: %s", opts.GRPCAddr, strings.Join(childArgs, " "))
 
-	code, err := launcher.Run(ctx, childArgs, env)
+	code, err := launcher.Run(ctx, childArgs, env, launcher.IOConfig{})
 	if err != nil {
 		return err
 	}

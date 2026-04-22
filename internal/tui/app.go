@@ -103,11 +103,11 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Tab):
 			m.activeTab = m.nextTab()
 			m = m.resize()
-			return m, nil
+			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.ShiftTab):
 			m.activeTab = m.prevTab()
 			m = m.resize()
-			return m, nil
+			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.Help):
 			m.showHelp = !m.showHelp
 			return m, nil
@@ -157,6 +157,14 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tea.Batch(cmds...)
+
+	case procOutTickMsg:
+		if m.hasProcOut && m.activeTab == tabProcOut {
+			var cmd tea.Cmd
+			m.procOut, cmd = m.procOut.tick()
+			return m, cmd
+		}
+		return m, nil
 
 	case tracesLoadedMsg:
 		if msg.Err == nil {
@@ -218,6 +226,13 @@ func (m appModel) tabOrder() []tabID {
 	return order
 }
 
+func (m appModel) procOutKickCmd() tea.Cmd {
+	if m.hasProcOut && m.activeTab == tabProcOut {
+		return procOutTickCmd()
+	}
+	return nil
+}
+
 func (m appModel) resize() appModel {
 	contentH := max(5, m.height-3)
 	m.traces.setSize(m.width, contentH)
@@ -276,26 +291,3 @@ func (m appModel) viewActive() string {
 	}
 	return ""
 }
-
-// ----- temporary procOut stub until Task 15 lands -----
-// Task 15 will replace this file/type with the real tailing model in procout.go
-// (this stub keeps the build green now).
-type procOutModel struct {
-	path   string
-	width  int
-	height int
-}
-
-func newProcOutModel(path string) procOutModel { return procOutModel{path: path} }
-
-func (m procOutModel) View() string {
-	return lipgloss.NewStyle().Foreground(colorMuted).Italic(true).
-		Render("process output tailing from: " + m.path)
-}
-
-func (m procOutModel) setSize(w, h int) procOutModel {
-	m.width, m.height = w, h
-	return m
-}
-
-func (m procOutModel) tick() (procOutModel, tea.Cmd) { return m, nil }
