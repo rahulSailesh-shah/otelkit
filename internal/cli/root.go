@@ -39,5 +39,4 @@ func Execute() error {
 }
 
 // temporary stubs until subcommand files land
-func newRunCmd() *cobra.Command     { return &cobra.Command{Use: "run"} }
 func newDashCmd() *cobra.Command    { return &cobra.Command{Use: "dash"} }
