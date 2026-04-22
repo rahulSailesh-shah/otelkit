@@ -91,7 +91,7 @@ func (s *sqliteDB) Close() error {
 	var firstErr error
 
 	if s.readDB != nil {
-		if err := s.readDB.Close(); err != nil && firstErr == nil {
+		if err := s.readDB.Close(); err != nil {
 			firstErr = err
 		}
 	}

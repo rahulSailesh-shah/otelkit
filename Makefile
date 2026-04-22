@@ -36,7 +36,7 @@ grafana-up:
 	docker compose --profile grafana -f infra/docker-compose.yml up -d
 
 grafana-down:
-	docker compose --profile grafana -f infra/docker-compose.yml down -v
+	docker compose --profile grafana -f infra/docker-compose.yml down
 
 # ── SigNoz stack: ZooKeeper + ClickHouse + OTel Collector + SigNoz UI ────────
 # UI: http://localhost:8080
@@ -46,7 +46,7 @@ signoz-up:
 	docker compose -f infra/signoz/docker-compose.yml up -d
 
 signoz-down:
-	docker compose -f infra/signoz/docker-compose.yml down -v
+	docker compose -f infra/signoz/docker-compose.yml down
 
 # ── Run otelkit launcher ──────────────────────────────────────────────────────
 # Defaults: SERVICE=demo  CMD="go run ./examples/demo"
