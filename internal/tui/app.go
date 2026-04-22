@@ -101,11 +101,21 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, keys.Tab):
+			prev := m.activeTab
 			m.activeTab = m.nextTab()
+			if prev == tabTraces && m.activeTab != tabTraces {
+				m.tracesView = viewList
+				m.lastTraceID = ""
+			}
 			m = m.resize()
 			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.ShiftTab):
+			prev := m.activeTab
 			m.activeTab = m.prevTab()
+			if prev == tabTraces && m.activeTab != tabTraces {
+				m.tracesView = viewList
+				m.lastTraceID = ""
+			}
 			m = m.resize()
 			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.Help):
@@ -145,24 +155,15 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		cmds := []tea.Cmd{
+		return m, tea.Batch(
 			loadTracesCmd(m.ctx, m.queries, 100),
 			tickCmd(m.opts.RefreshInterval),
-		}
-		if m.hasProcOut && m.activeTab == tabProcOut {
-			var cmd tea.Cmd
-			m.procOut, cmd = m.procOut.tick()
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-		return m, tea.Batch(cmds...)
+		)
 
 	case procOutTickMsg:
 		if m.hasProcOut && m.activeTab == tabProcOut {
-			var cmd tea.Cmd
-			m.procOut, cmd = m.procOut.tick()
-			return m, cmd
+			m.procOut = m.procOut.tick()
+			return m, procOutTickCmd()
 		}
 		return m, nil
 
@@ -193,6 +194,10 @@ func (m appModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.waterfall, cmd = m.waterfall.Update(msg)
 		case viewDetail:
 			m.detail, cmd = m.detail.Update(msg)
+		}
+	case tabProcOut:
+		if m.hasProcOut {
+			m.procOut, cmd = m.procOut.Update(msg)
 		}
 	}
 	return m, cmd

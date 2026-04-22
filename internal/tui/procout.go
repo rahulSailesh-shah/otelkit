@@ -41,13 +41,19 @@ func (m procOutModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, body)
 }
 
-func (m procOutModel) tick() (procOutModel, tea.Cmd) {
+func (m procOutModel) tick() procOutModel {
 	content := readFileSafe(m.path)
 	m.vp.SetContent(content)
 	if m.tailing {
 		m.vp.GotoBottom()
 	}
-	return m, procOutTickCmd()
+	return m
+}
+
+func (m procOutModel) Update(msg tea.Msg) (procOutModel, tea.Cmd) {
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	return m, cmd
 }
 
 func procOutTickCmd() tea.Cmd {
