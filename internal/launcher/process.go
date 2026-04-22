@@ -21,7 +21,7 @@ type IOConfig struct {
 // inherited environment, wires stdio per IOConfig (falling back to the parent
 // process), forwards SIGINT/SIGTERM to the child, and returns the child's exit
 // code.
-func Run(_ context.Context, command []string, extraEnv []string, io IOConfig) (int, error) {
+func Run(ctx context.Context, command []string, extraEnv []string, io IOConfig) (int, error) {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdin = firstReader(io.Stdin, os.Stdin)
@@ -32,13 +32,26 @@ func Run(_ context.Context, command []string, extraEnv []string, io IOConfig) (i
 		return 0, err
 	}
 
+	// Propagate context cancellation to the child.
+	ctxDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			if cmd.Process != nil {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+			}
+		case <-ctxDone:
+		}
+	}()
+	defer close(ctxDone)
+
 	// Forward SIGINT and SIGTERM to child so it can shut down gracefully.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		for sig := range sigCh {
 			if cmd.Process != nil {
-				cmd.Process.Signal(sig)
+				_ = cmd.Process.Signal(sig)
 			}
 		}
 	}()

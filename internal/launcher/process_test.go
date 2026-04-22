@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rahulSailesh-shah/otelkit/internal/launcher"
 )
@@ -69,5 +70,25 @@ func TestRun_redirectsStdout(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "redirected") {
 		t.Errorf("stdout buffer = %q, want to contain 'redirected'", buf.String())
+	}
+}
+
+func TestRun_cancelsChildOnContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		_, _ = launcher.Run(ctx, []string{"sh", "-c", "sleep 60"}, nil, launcher.IOConfig{})
+		close(done)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// good: child exited after cancel
+	case <-time.After(5 * time.Second):
+		t.Fatal("launcher.Run did not return within 5s after context cancel")
 	}
 }
