@@ -33,20 +33,20 @@ demo:
 # UI: Jaeger :16686  Prometheus :9090  Grafana :3000 (admin/admin)
 # otelkit flags: --jaeger-addr localhost:14317 --prometheus-addr :9091 --loki-addr http://localhost:3100
 grafana-up:
-	podman compose --profile grafana -f infra/docker-compose.yml up -d
+	docker compose --profile grafana -f infra/docker-compose.yml up -d
 
 grafana-down:
-	podman compose --profile grafana -f infra/docker-compose.yml down -v
+	docker compose --profile grafana -f infra/docker-compose.yml down -v
 
 # ── SigNoz stack: ZooKeeper + ClickHouse + OTel Collector + SigNoz UI ────────
 # UI: http://localhost:8080
 # otelkit flags: --signoz-addr localhost:24317
 # Note: first run downloads histogram-quantile binary (~5s), subsequent runs instant.
 signoz-up:
-	podman compose -f infra/signoz/docker-compose.yml up -d
+	docker compose -f infra/signoz/docker-compose.yml up -d
 
 signoz-down:
-	podman compose -f infra/signoz/docker-compose.yml down -v
+	docker compose -f infra/signoz/docker-compose.yml down -v
 
 # ── Run otelkit launcher ──────────────────────────────────────────────────────
 # Defaults: SERVICE=demo  CMD="go run ./examples/demo"
