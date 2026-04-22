@@ -43,16 +43,22 @@ SELECT
     CAST(MAX(end_time_ns) - MIN(start_time_ns) AS INTEGER) AS duration_ns,
     CAST(COUNT(*) AS INTEGER)                            AS span_count,
     CAST(MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END) AS INTEGER) AS has_errors,
-    (
-        SELECT s2.service_name FROM spans s2
-        WHERE s2.trace_id = spans.trace_id AND s2.parent_span_id IS NULL
-        LIMIT 1
-    )                                                    AS root_service,
-    (
-        SELECT s2.name FROM spans s2
-        WHERE s2.trace_id = spans.trace_id AND s2.parent_span_id IS NULL
-        LIMIT 1
-    )                                                    AS root_name
+    CAST(COALESCE(
+        (
+            SELECT s2.service_name FROM spans s2
+            WHERE s2.trace_id = spans.trace_id AND s2.parent_span_id IS NULL
+            LIMIT 1
+        ),
+        ''
+    ) AS TEXT)                                           AS root_service,
+    CAST(COALESCE(
+        (
+            SELECT s2.name FROM spans s2
+            WHERE s2.trace_id = spans.trace_id AND s2.parent_span_id IS NULL
+            LIMIT 1
+        ),
+        ''
+    ) AS TEXT)                                           AS root_name
 FROM spans
 GROUP BY trace_id
 ORDER BY start_time_ns DESC

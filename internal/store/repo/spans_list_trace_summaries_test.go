@@ -106,3 +106,37 @@ func TestListTraceSummaries(t *testing.T) {
 		t.Errorf("root_name a=%q want GET /a", a.RootName)
 	}
 }
+
+func TestListTraceSummaries_NoRootSpan(t *testing.T) {
+	db := newTestDB(t)
+	q := repo.New(db)
+	ctx := context.Background()
+	parent := "missing-root-id"
+	if err := q.InsertSpan(ctx, repo.InsertSpanParams{
+		SpanID:       "child1",
+		TraceID:      "orphan",
+		ParentSpanID: &parent,
+		Name:         "db.query",
+		ServiceName:  "svc-c",
+		SpanKind:     0,
+		StartTimeNs:  100,
+		EndTimeNs:    300,
+		StatusCode:   0,
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	rows, err := q.ListTraceSummaries(ctx, repo.ListTraceSummariesParams{Limit: 10, Offset: 0})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.TraceID != "orphan" {
+		t.Errorf("trace_id = %q, want orphan", r.TraceID)
+	}
+	if r.RootService != "" || r.RootName != "" {
+		t.Errorf("expected empty root service/name for orphan trace, got %q/%q", r.RootService, r.RootName)
+	}
+}
