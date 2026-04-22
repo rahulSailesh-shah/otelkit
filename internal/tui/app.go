@@ -61,6 +61,7 @@ type appModel struct {
 	procOut     procOutModel
 	hasProcOut  bool
 	lastTraceID string
+	lastErr     string
 }
 
 func newAppModel(ctx context.Context, opts Options) appModel {
@@ -168,13 +169,21 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tracesLoadedMsg:
-		if msg.Err == nil {
+		if msg.Err != nil {
+			m.lastErr = "traces load: " + msg.Err.Error()
+		} else {
+			m.lastErr = ""
 			m.traces.setRows(msg.Rows)
 		}
 		return m, nil
 
 	case traceSpansLoadedMsg:
-		if msg.Err == nil && msg.TraceID == m.lastTraceID {
+		if msg.Err != nil {
+			m.lastErr = "spans load: " + msg.Err.Error()
+			return m, nil
+		}
+		if msg.TraceID == m.lastTraceID {
+			m.lastErr = ""
 			m.waterfall.setSpans(msg.Spans)
 		}
 		return m, nil
@@ -266,8 +275,12 @@ func (m appModel) View() tea.View {
 
 	bar := joinTabs(labels, active) + "   " + helpStyle.Render("? help · q quit")
 	body := m.viewActive()
-
-	content := lipgloss.JoinVertical(lipgloss.Left, bar, body)
+	parts := []string{bar}
+	if m.lastErr != "" {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorError).Render("! "+m.lastErr))
+	}
+	parts = append(parts, body)
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	v := tea.NewView(content)
 	v.AltScreen = true
