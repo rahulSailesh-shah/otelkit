@@ -4,20 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"os"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/global"
 )
 
-// NewHandler returns a handler that writes to both stdout and the OTLP log provider.
-// Stdout uses text format; OTLP body is JSON with all attrs inlined.
-func NewHandler(lp log.LoggerProvider) slog.Handler {
+// Wrap takes any slog.Handler and returns a handler that tees to both
+// the original handler AND the OTel LoggerProvider (via OTLP).
+// Reads LoggerProvider from the global set by sdk.Init().
+//
+// Usage:
+//
+//	slog.SetDefault(slog.New(
+//	    otelkitlog.Wrap(slog.NewTextHandler(os.Stdout, nil)),
+//	))
+func Wrap(h slog.Handler) slog.Handler {
+	lp := global.GetLoggerProvider()
 	otlp := &bodyEnrichHandler{
 		inner: otelslog.NewHandler("otelkit", otelslog.WithLoggerProvider(lp)),
 	}
-	stdout := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
-	return &teeHandler{handlers: []slog.Handler{otlp, stdout}}
+	return &teeHandler{handlers: []slog.Handler{otlp, h}}
 }
 
 // teeHandler fans out to multiple handlers.

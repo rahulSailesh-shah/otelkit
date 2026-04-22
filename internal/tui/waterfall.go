@@ -116,13 +116,15 @@ func (m waterfallModel) View() string {
 	if len(m.spans) == 0 {
 		return waterfallEmptyStyle.Render("select a trace to see its waterfall")
 	}
-	bars := layoutBars(m.spans, max(10, m.width-40))
+	trackWidth := max(10, m.width-40)
+	bars := layoutBars(m.spans, trackWidth)
 
 	var b strings.Builder
 	for i, s := range m.spans {
 		label := fmt.Sprintf("%-22s %-16s", truncate(s.ServiceName, 22), truncate(s.Name, 16))
-		track := renderTrack(bars[i], max(10, m.width-40))
-		line := fmt.Sprintf("%s %s %s", label, track, fmtDuration(s.EndTimeNs-s.StartTimeNs))
+		dur := fmtDuration(s.EndTimeNs - s.StartTimeNs)
+		track := renderTrack(bars[i], trackWidth, dur)
+		line := fmt.Sprintf("%s %s", label, track)
 		if i == m.cursor {
 			line = waterfallCursorStyle.Render(line)
 		}
@@ -132,14 +134,38 @@ func (m waterfallModel) View() string {
 	return b.String()
 }
 
-func renderTrack(bar Bar, width int) string {
+// renderTrack draws the bar on a `width`-wide track and inlines the duration
+// label adjacent to the bar. It prefers the leading edge (just before the bar),
+// falls back to the trailing edge, and as a last resort overlays the label at
+// the start of the bar itself (used for root spans that consume the entire
+// track). This matches the Jaeger-style affordance where the duration floats
+// next to its bar.
+func renderTrack(bar Bar, width int, label string) string {
 	if width <= 0 {
 		width = 1
 	}
-	left := strings.Repeat(" ", bar.Offset)
-	filled := strings.Repeat("█", bar.Width)
-	right := strings.Repeat(" ", max(0, width-bar.Offset-bar.Width))
-	return left + stylesForBarLG(bar.Style).Render(filled) + right
+	leftSpaces := bar.Offset
+	rightSpaces := max(0, width-bar.Offset-bar.Width)
+	labelLen := len(label)
+
+	leftStr := strings.Repeat(" ", leftSpaces)
+	rightStr := strings.Repeat(" ", rightSpaces)
+	filled := stylesForBarLG(bar.Style).Render(strings.Repeat("█", bar.Width))
+
+	switch {
+	case leftSpaces >= labelLen+1:
+		leftStr = strings.Repeat(" ", leftSpaces-labelLen-1) +
+			waterfallDurationStyle.Render(label) + " "
+	case rightSpaces >= labelLen+1:
+		rightStr = " " + waterfallDurationStyle.Render(label) +
+			strings.Repeat(" ", rightSpaces-labelLen-1)
+	case bar.Width >= labelLen+2:
+		remaining := bar.Width - labelLen - 1
+		filled = waterfallDurationStyle.Render(label) + " " +
+			stylesForBarLG(bar.Style).Render(strings.Repeat("█", remaining))
+	}
+
+	return leftStr + filled + rightStr
 }
 
 // selectedSpan returns the currently highlighted span, if any.

@@ -3,12 +3,9 @@ package sdk
 import (
 	"context"
 	"fmt"
-	"log"
-	"log/slog"
 	"os"
 
 	"go.opentelemetry.io/otel"
-	"github.com/rahulSailesh-shah/otelkit/pkg/otelkitlog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -62,10 +59,10 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// Init wires traces, metrics, and logs to the OTLP endpoint, sets OTel globals,
-// sets slog.SetDefault, and redirects stdlib log through slog.
-// Call once from main(); defer the returned ShutdownFunc.
-func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
+// Init wires traces, metrics, and logs providers to the OTLP endpoint and sets
+// OTel globals. Call once from main(); defer the returned ShutdownFunc.
+// To instrument logging, use otelkitlog.Wrap() after Init.
+func Init(opts ...Option) (ShutdownFunc, error) {
 	c := &config{
 		endpoint: "localhost:4317",
 		insecure: true,
@@ -86,7 +83,7 @@ func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
 		),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build resource: %w", err)
+		return nil, fmt.Errorf("build resource: %w", err)
 	}
 
 	// --- TracerProvider ---
@@ -96,7 +93,7 @@ func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
 	}
 	traceExporter, err := otlptracegrpc.New(ctx, traceOpts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("trace exporter: %w", err)
+		return nil, fmt.Errorf("trace exporter: %w", err)
 	}
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithResource(res),
@@ -112,7 +109,7 @@ func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
 	}
 	metricExporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("metric exporter: %w", err)
+		return nil, fmt.Errorf("metric exporter: %w", err)
 	}
 	mp := metric.NewMeterProvider(
 		metric.WithResource(res),
@@ -127,7 +124,7 @@ func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
 	}
 	logExporter, err := otlploggrpc.New(ctx, logOpts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("log exporter: %w", err)
+		return nil, fmt.Errorf("log exporter: %w", err)
 	}
 	lp := sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),
@@ -140,13 +137,6 @@ func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
 		propagation.TraceContext{},
 		propagation.Baggage{},
 	))
-
-	// --- Logger ---
-	handler := otelkitlog.NewHandler(lp)
-	logger := slog.New(handler)
-	slog.SetDefault(logger)
-	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelInfo).Writer())
-	log.SetFlags(0)
 
 	shutdown := func(ctx context.Context) error {
 		var errs []error
@@ -165,5 +155,5 @@ func Init(opts ...Option) (ShutdownFunc, *slog.Logger, error) {
 		return nil
 	}
 
-	return shutdown, logger, nil
+	return shutdown, nil
 }

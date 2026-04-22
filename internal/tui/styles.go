@@ -35,8 +35,9 @@ var (
 			BorderForeground(colorMuted).
 			Padding(0, 1)
 
-	waterfallEmptyStyle  = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
-	waterfallCursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("#313244")).Foreground(colorText)
+	waterfallEmptyStyle    = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	waterfallCursorStyle   = lipgloss.NewStyle().Background(lipgloss.Color("#313244")).Foreground(colorText)
+	waterfallDurationStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 
 	barNormal = lipgloss.NewStyle().Foreground(colorBrand)
 	barError  = lipgloss.NewStyle().Foreground(colorError)
