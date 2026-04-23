@@ -12,17 +12,23 @@ import (
 	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
-// metricWindowSec is the fixed look-back window for the right-pane chart.
 const metricWindowSec int64 = 900
 
 type metricsModel struct {
 	list       table.Model
 	names      []MetricNameRow
 	selected   string
-	series     []MetricSeriesPoint
+
+	kpis      KPIData
+	groups    []MetricGroupStats
+	aggLatest float64
+	aggMin    float64
+	aggMax    float64
+	aggAvg    float64
 	unit       string
 	metricType int64
-	chart      metricChart
+	groupTable table.Model
+
 	width      int
 	height     int
 	lastSync   time.Time
@@ -32,11 +38,9 @@ type metricsModel struct {
 }
 
 func newMetricsModel() metricsModel {
-	cols := []table.Column{
-		{Title: "Metric", Width: 26},
-	}
+	listCols := []table.Column{{Title: "Metric", Width: 26}}
 	t := table.New(
-		table.WithColumns(cols),
+		table.WithColumns(listCols),
 		table.WithFocused(true),
 		table.WithHeight(10),
 	)
@@ -45,11 +49,26 @@ func newMetricsModel() metricsModel {
 		Cell:     lipgloss.NewStyle().Padding(0, 1).Foreground(colorText),
 		Selected: lipgloss.NewStyle().Padding(0, 1).Foreground(colorText).Background(lipgloss.Color("#313244")).Bold(true),
 	})
-	return metricsModel{list: t, chart: newMetricChart()}
+
+	groupCols := []table.Column{
+		{Title: "Attributes", Width: 30},
+		{Title: "Latest", Width: 8},
+		{Title: "Min", Width: 8},
+		{Title: "Max", Width: 8},
+		{Title: "Avg", Width: 8},
+	}
+	gt := table.New(
+		table.WithColumns(groupCols),
+		table.WithHeight(10),
+	)
+	gt.SetStyles(table.Styles{
+		Header: lipgloss.NewStyle().Bold(true).Padding(0, 1).Foreground(colorText).Background(colorBrand),
+		Cell:   lipgloss.NewStyle().Padding(0, 1).Foreground(colorMuted),
+	})
+
+	return metricsModel{list: t, groupTable: gt}
 }
 
-// setSource wires the data source used for building follow-up series-load
-// commands on selection changes. Safe to omit in tests (commands become nil).
 func (m *metricsModel) setSource(ctx context.Context, q *repo.Queries) {
 	m.ctx = ctx
 	m.queries = q
@@ -66,14 +85,13 @@ func (m *metricsModel) setNames(rows []MetricNameRow) {
 
 	if len(rows) == 0 {
 		m.selected = ""
-		m.series = nil
+		m.groups = nil
+		m.groupTable.SetRows(nil)
 		m.unit = ""
 		m.metricType = 0
-		m.chart.setPoints(nil)
 		return
 	}
 
-	// If the previously-selected name is gone, fall back to the current cursor row.
 	stillPresent := false
 	for _, r := range rows {
 		if r.Name == m.selected {
@@ -84,18 +102,37 @@ func (m *metricsModel) setNames(rows []MetricNameRow) {
 	if !stillPresent {
 		if n, ok := m.currentRowName(); ok {
 			m.selected = n
-			m.series = nil
-			m.chart.setPoints(nil)
+			m.groups = nil
+			m.groupTable.SetRows(nil)
 		}
 	}
 }
 
-func (m *metricsModel) setSeries(name string, pts []MetricSeriesPoint, unit string, mtype int64) {
-	m.selected = name
-	m.series = pts
-	m.unit = unit
-	m.metricType = mtype
-	m.chart.setPoints(pts)
+func (m *metricsModel) setKPIs(d KPIData) {
+	m.kpis = d
+}
+
+func (m *metricsModel) setGroups(msg metricGroupsLoadedMsg) {
+	m.selected = msg.Name
+	m.groups = msg.Groups
+	m.aggLatest = msg.AggLatest
+	m.aggMin = msg.AggMin
+	m.aggMax = msg.AggMax
+	m.aggAvg = msg.AggAvg
+	m.unit = msg.Unit
+	m.metricType = msg.Type
+
+	rows := make([]table.Row, 0, len(msg.Groups))
+	for _, g := range msg.Groups {
+		rows = append(rows, table.Row{
+			g.Label,
+			fmtFloat(g.Latest),
+			fmtFloat(g.Min),
+			fmtFloat(g.Max),
+			fmtFloat(g.Avg),
+		})
+	}
+	m.groupTable.SetRows(rows)
 }
 
 func (m metricsModel) currentRowName() (string, bool) {
@@ -126,9 +163,9 @@ func (m metricsModel) Update(msg tea.Msg) (metricsModel, tea.Cmd) {
 	}
 
 	m.selected = newName
-	m.series = nil
-	m.chart.setPoints(nil)
-	loadCmd := m.loadSelectedSeriesCmd()
+	m.groups = nil
+	m.groupTable.SetRows(nil)
+	loadCmd := m.loadSelectedGroupsCmd()
 	switch {
 	case cmd == nil:
 		return m, loadCmd
@@ -139,11 +176,11 @@ func (m metricsModel) Update(msg tea.Msg) (metricsModel, tea.Cmd) {
 	}
 }
 
-func (m metricsModel) loadSelectedSeriesCmd() tea.Cmd {
+func (m metricsModel) loadSelectedGroupsCmd() tea.Cmd {
 	if m.queries == nil || m.ctx == nil || m.selected == "" {
 		return nil
 	}
-	return loadMetricSeriesCmd(m.ctx, m.queries, m.selected, metricWindowSec)
+	return loadMetricGroupsCmd(m.ctx, m.queries, m.selected, metricWindowSec)
 }
 
 func (m *metricsModel) setSize(w, h int) {
@@ -168,9 +205,17 @@ func (m *metricsModel) setSize(w, h int) {
 		m.list.SetColumns(cols)
 	}
 
-	chartW := max(20, w-listW-6)
-	chartH := max(5, contentH-5)
-	m.chart.setSize(chartW, chartH)
+	rightW := max(20, w-listW-6)
+	tableH := max(3, contentH-10)
+
+	tblCols := m.groupTable.Columns()
+	if len(tblCols) > 0 {
+		attrW := max(10, rightW-8*4-10)
+		tblCols[0].Width = attrW
+		m.groupTable.SetColumns(tblCols)
+	}
+	m.groupTable.SetHeight(tableH)
+	m.groupTable.SetWidth(rightW)
 }
 
 func (m metricsModel) View() string {
@@ -178,20 +223,63 @@ func (m metricsModel) View() string {
 		helpStyle.Render(fmt.Sprintf("  last sync %s · r refresh · ↑/↓ select · tab switch", nowFmt()))
 
 	leftBody := borderStyle.Render(m.list.View())
+	rightBody := borderStyle.Render(m.renderRight())
+	panes := lipgloss.JoinHorizontal(lipgloss.Top, leftBody, rightBody)
+	return lipgloss.JoinVertical(lipgloss.Left, header, panes)
+}
 
-	var right string
+func (m metricsModel) renderRight() string {
+	kpiRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.kpiCard("SQL Exec Avg", m.kpis.SQLExecLatency),
+		m.kpiCard("Avg GET", m.kpis.AvgGETDuration),
+		m.kpiCard("Avg POST", m.kpis.AvgPOSTDuration),
+		m.kpiCard("Idle Conns", m.kpis.IdleConns),
+	)
+
+	var detail string
 	if m.selected == "" {
-		msg := helpStyle.Italic(true).Render("select a metric")
-		w := max(20, m.width-38)
-		h := max(5, m.height-6)
-		box := lipgloss.NewStyle().Width(w).Height(h).Align(lipgloss.Center, lipgloss.Center).Render(msg)
-		right = borderStyle.Render(box)
+		detail = helpStyle.Italic(true).Render("select a metric")
 	} else {
-		right = borderStyle.Render(
-			m.chart.chartView(m.selected, m.unit, m.metricType, m.series, metricWindowSec),
+		qualifier := typeLabel(m.metricType)
+		if m.unit != "" {
+			qualifier = qualifier + " · " + m.unit
+		}
+		metricHeader := titleStyle.Render(m.selected) + "  " + helpStyle.Render("("+qualifier+")")
+		aggStats := fmt.Sprintf("latest: %s  min: %s  max: %s  avg: %s",
+			fmtFloat(m.aggLatest), fmtFloat(m.aggMin), fmtFloat(m.aggMax), fmtFloat(m.aggAvg))
+		detail = lipgloss.JoinVertical(lipgloss.Left,
+			metricHeader,
+			attrVal.Render(aggStats),
+			"",
+			m.groupTable.View(),
 		)
 	}
 
-	panes := lipgloss.JoinHorizontal(lipgloss.Top, leftBody, right)
-	return lipgloss.JoinVertical(lipgloss.Left, header, panes)
+	return lipgloss.JoinVertical(lipgloss.Left, kpiRow, "", detail)
+}
+
+func (m metricsModel) kpiCard(label, val string) string {
+	return kpiCardStyle.Render(
+		helpStyle.Render(label) + "\n" + attrVal.Bold(true).Render(val),
+	)
+}
+
+func typeLabel(t int64) string {
+	switch t {
+	case 1:
+		return "gauge"
+	case 2:
+		return "sum"
+	case 3:
+		return "histogram"
+	default:
+		return "-"
+	}
+}
+
+func fmtFloat(v float64) string {
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("%d", int64(v))
+	}
+	return fmt.Sprintf("%.3g", v)
 }

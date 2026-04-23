@@ -9,7 +9,6 @@ import (
 	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
-// BarStyle selects a colour/theme for a bar in the waterfall.
 type BarStyle int
 
 const (
@@ -19,15 +18,12 @@ const (
 	BarRoot
 )
 
-// Bar is a laid-out span on the waterfall track.
 type Bar struct {
 	Offset int
 	Width  int
 	Style  BarStyle
 }
 
-// layoutBars normalises span start/end against the overall trace window
-// and returns per-span offsets and widths that fit within `width` columns.
 func layoutBars(spans []repo.Span, width int) []Bar {
 	if len(spans) == 0 {
 		return nil
@@ -168,7 +164,6 @@ func renderTrack(bar Bar, width int, label string) string {
 	return leftStr + filled + rightStr
 }
 
-// selectedSpan returns the currently highlighted span, if any.
 func (m waterfallModel) selectedSpan() (repo.Span, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.spans) {
 		return repo.Span{}, false

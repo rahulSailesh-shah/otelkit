@@ -436,6 +436,67 @@ func (q *Queries) ListMetricPointsByServiceAndTimeRange(ctx context.Context, arg
 	return items, nil
 }
 
+const listMetricPointsByServiceNameAndTimeRange = `-- name: ListMetricPointsByServiceNameAndTimeRange :many
+SELECT id, name, description, unit, type, service_name, attributes, timestamp_ns, value_int, value_double, hist_count, hist_sum, hist_bounds, hist_counts, resource_attrs, ingested_at FROM metric_points
+WHERE service_name = ?
+  AND name = ?
+  AND timestamp_ns >= ?
+  AND timestamp_ns <= ?
+ORDER BY timestamp_ns ASC
+`
+
+type ListMetricPointsByServiceNameAndTimeRangeParams struct {
+	ServiceName   string `json:"service_name"`
+	Name          string `json:"name"`
+	TimestampNs   int64  `json:"timestamp_ns"`
+	TimestampNs_2 int64  `json:"timestamp_ns_2"`
+}
+
+func (q *Queries) ListMetricPointsByServiceNameAndTimeRange(ctx context.Context, arg ListMetricPointsByServiceNameAndTimeRangeParams) ([]MetricPoint, error) {
+	rows, err := q.db.QueryContext(ctx, listMetricPointsByServiceNameAndTimeRange,
+		arg.ServiceName,
+		arg.Name,
+		arg.TimestampNs,
+		arg.TimestampNs_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricPoint
+	for rows.Next() {
+		var i MetricPoint
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.Unit,
+			&i.Type,
+			&i.ServiceName,
+			&i.Attributes,
+			&i.TimestampNs,
+			&i.ValueInt,
+			&i.ValueDouble,
+			&i.HistCount,
+			&i.HistSum,
+			&i.HistBounds,
+			&i.HistCounts,
+			&i.ResourceAttrs,
+			&i.IngestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMetricPointsByType = `-- name: ListMetricPointsByType :many
 SELECT id, name, description, unit, type, service_name, attributes, timestamp_ns, value_int, value_double, hist_count, hist_sum, hist_bounds, hist_counts, resource_attrs, ingested_at FROM metric_points
 WHERE type = ?

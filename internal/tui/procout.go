@@ -73,7 +73,6 @@ func readFileSafe(path string) string {
 			Render("(no output yet)")
 	}
 	s := string(b)
-	// Drop trailing blank line for tidier display.
 	s = strings.TrimRight(s, "\n")
 	return s
 }

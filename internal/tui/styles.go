@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	colorBrand   = lipgloss.Color("#7D56F4")
+	colorBrand   = lipgloss.Color("#006D5B")
 	colorMuted   = lipgloss.Color("#626880")
 	colorText    = lipgloss.Color("#E5E7EB")
 	colorError   = lipgloss.Color("#F38BA8")
@@ -46,6 +46,12 @@ var (
 
 	attrKey = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	attrVal = lipgloss.NewStyle().Foreground(colorText)
+
+	kpiCardStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorMuted).
+			Padding(0, 2).
+			MarginRight(1)
 )
 
 func stylesForBarLG(s BarStyle) lipgloss.Style {

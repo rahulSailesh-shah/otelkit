@@ -98,8 +98,13 @@ func (m appModel) Init() tea.Cmd {
 		loadTracesCmd(m.ctx, m.queries, 100),
 		loadLogsCmd(m.ctx, m.queries, 200),
 		loadMetricNamesCmd(m.ctx, m.queries),
+		loadKPIsCmd(m.ctx, m.queries),
 		tickCmd(m.opts.RefreshInterval),
 	)
+}
+
+func (m appModel) logsFilterModeOnList() bool {
+	return m.activeTab == tabLogs && m.logsView == viewLogList && m.logs.filterMode
 }
 
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -115,6 +120,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, keys.Tab):
+			if m.logsFilterModeOnList() {
+				break
+			}
 			prev := m.activeTab
 			m.activeTab = m.nextTab()
 			if prev == tabTraces && m.activeTab != tabTraces {
@@ -127,6 +135,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.resize()
 			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.ShiftTab):
+			if m.logsFilterModeOnList() {
+				break
+			}
 			prev := m.activeTab
 			m.activeTab = m.prevTab()
 			if prev == tabTraces && m.activeTab != tabTraces {
@@ -146,9 +157,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				loadTracesCmd(m.ctx, m.queries, 100),
 				loadLogsCmd(m.ctx, m.queries, 200),
 				loadMetricNamesCmd(m.ctx, m.queries),
+				loadKPIsCmd(m.ctx, m.queries),
 			}
 			if name, ok := m.metrics.selectedName(); ok {
-				cmds = append(cmds, loadMetricSeriesCmd(m.ctx, m.queries, name, metricWindowSec))
+				cmds = append(cmds, loadMetricGroupsCmd(m.ctx, m.queries, name, metricWindowSec))
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -185,6 +197,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeTab == tabLogs {
 			switch {
 			case key.Matches(msg, keys.Enter):
+				if m.logsFilterModeOnList() {
+					break
+				}
 				if m.logsView == viewLogList {
 					if row, ok := m.logs.selectedLog(); ok {
 						m.logDetail.setLog(row)
@@ -195,6 +210,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, keys.Back):
 				if m.logsView == viewLogDetail {
 					m.logsView = viewLogList
+					return m, nil
+				}
+				if m.logsFilterModeOnList() {
+					break
 				}
 				return m, nil
 			}
@@ -205,10 +224,11 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			loadTracesCmd(m.ctx, m.queries, 100),
 			loadLogsCmd(m.ctx, m.queries, 200),
 			loadMetricNamesCmd(m.ctx, m.queries),
+			loadKPIsCmd(m.ctx, m.queries),
 			tickCmd(m.opts.RefreshInterval),
 		}
 		if name, ok := m.metrics.selectedName(); ok {
-			cmds = append(cmds, loadMetricSeriesCmd(m.ctx, m.queries, name, metricWindowSec))
+			cmds = append(cmds, loadMetricGroupsCmd(m.ctx, m.queries, name, metricWindowSec))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -258,18 +278,27 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.metrics.setNames(msg.Rows)
 		cur, hasCur := m.metrics.selectedName()
 		if hasCur && (!hadPrev || prev != cur) {
-			return m, loadMetricSeriesCmd(m.ctx, m.queries, cur, metricWindowSec)
+			return m, loadMetricGroupsCmd(m.ctx, m.queries, cur, metricWindowSec)
 		}
 		return m, nil
 
-	case metricSeriesLoadedMsg:
+	case kpisLoadedMsg:
 		if msg.Err != nil {
-			m.lastErr = "metric series load: " + msg.Err.Error()
+			m.lastErr = "kpis load: " + msg.Err.Error()
+			return m, nil
+		}
+		m.lastErr = ""
+		m.metrics.setKPIs(msg.Data)
+		return m, nil
+
+	case metricGroupsLoadedMsg:
+		if msg.Err != nil {
+			m.lastErr = "metric groups load: " + msg.Err.Error()
 			return m, nil
 		}
 		if name, ok := m.metrics.selectedName(); ok && name == msg.Name {
 			m.lastErr = ""
-			m.metrics.setSeries(msg.Name, msg.Points, msg.Unit, msg.Type)
+			m.metrics.setGroups(msg)
 		}
 		return m, nil
 	}

@@ -11,6 +11,51 @@ import (
 
 func f64Ptr(f float64) *float64 { return &f }
 
+// --- attrLabel ---
+
+func TestAttrLabelHTTPMethodAndStatus(t *testing.T) {
+	raw := `{"http.request.method":"GET","http.response.status_code":"200"}`
+	if got := attrLabel(strPtr(raw)); got != "GET 200" {
+		t.Errorf("got %q, want %q", got, "GET 200")
+	}
+}
+
+func TestAttrLabelMethod(t *testing.T) {
+	raw := `{"method":"sql.conn.exec"}`
+	if got := attrLabel(strPtr(raw)); got != "sql.conn.exec" {
+		t.Errorf("got %q, want %q", got, "sql.conn.exec")
+	}
+}
+
+func TestAttrLabelHTTPMethodOnly(t *testing.T) {
+	raw := `{"http.request.method":"POST"}`
+	if got := attrLabel(strPtr(raw)); got != "POST" {
+		t.Errorf("got %q, want %q", got, "POST")
+	}
+}
+
+func TestAttrLabelStatus(t *testing.T) {
+	raw := `{"status":"idle"}`
+	if got := attrLabel(strPtr(raw)); got != "idle" {
+		t.Errorf("got %q, want %q", got, "idle")
+	}
+}
+
+func TestAttrLabelFallback(t *testing.T) {
+	raw := `{"region":"us-east-1","tier":"premium"}`
+	if got := attrLabel(strPtr(raw)); got != "region=us-east-1 tier=premium" {
+		t.Errorf("got %q, want %q", got, "region=us-east-1 tier=premium")
+	}
+}
+
+func TestAttrLabelNil(t *testing.T) {
+	if got := attrLabel(nil); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// --- pointValue ---
+
 func TestPointValueGaugeDouble(t *testing.T) {
 	p := repo.MetricPoint{Type: 1, ValueDouble: f64Ptr(3.14)}
 	if got := pointValue(p); got != 3.14 {
@@ -32,68 +77,78 @@ func TestPointValueGaugeBothNil(t *testing.T) {
 	}
 }
 
-func TestPointValueSumDouble(t *testing.T) {
-	p := repo.MetricPoint{Type: 2, ValueDouble: f64Ptr(99.5)}
-	if got := pointValue(p); got != 99.5 {
-		t.Errorf("got %v, want 99.5", got)
-	}
-}
-
 func TestPointValueHistogramAvg(t *testing.T) {
-	p := repo.MetricPoint{
-		Type:      3,
-		HistSum:   f64Ptr(100.0),
-		HistCount: i64Ptr(4),
-	}
+	p := repo.MetricPoint{Type: 3, HistSum: f64Ptr(100.0), HistCount: i64Ptr(4)}
 	if got := pointValue(p); got != 25.0 {
 		t.Errorf("got %v, want 25.0", got)
 	}
 }
 
 func TestPointValueHistogramZeroCount(t *testing.T) {
-	p := repo.MetricPoint{
-		Type:      3,
-		HistSum:   f64Ptr(100.0),
-		HistCount: i64Ptr(0),
-	}
+	p := repo.MetricPoint{Type: 3, HistSum: f64Ptr(100.0), HistCount: i64Ptr(0)}
 	if got := pointValue(p); got != 0 {
 		t.Errorf("got %v, want 0", got)
 	}
 }
 
-func TestPointValueHistogramNilSum(t *testing.T) {
-	p := repo.MetricPoint{Type: 3, HistCount: i64Ptr(4)}
-	if got := pointValue(p); got != 0 {
-		t.Errorf("got %v, want 0", got)
+// --- groupMetricPoints ---
+
+func TestGroupMetricPointsEmpty(t *testing.T) {
+	r := groupMetricPoints(nil)
+	if len(r.Groups) != 0 || r.AggLatest != 0 || r.AggMin != 0 || r.AggMax != 0 || r.AggAvg != 0 {
+		t.Error("empty input should return zero result")
 	}
 }
 
-func TestMetricStatsEmpty(t *testing.T) {
-	latest, mn, mx, avg, n := metricStats(nil)
-	if latest != 0 || mn != 0 || mx != 0 || avg != 0 || n != 0 {
-		t.Errorf("empty should return zeros, got latest=%v min=%v max=%v avg=%v n=%d", latest, mn, mx, avg, n)
+func TestGroupMetricPointsSingleGroup(t *testing.T) {
+	pts := []repo.MetricPoint{
+		{Type: 1, Attributes: strPtr(`{"method":"exec"}`), ValueDouble: f64Ptr(10)},
+		{Type: 1, Attributes: strPtr(`{"method":"exec"}`), ValueDouble: f64Ptr(20)},
+	}
+	r := groupMetricPoints(pts)
+	if len(r.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(r.Groups))
+	}
+	if r.Groups[0].Label != "exec" {
+		t.Errorf("label = %q, want exec", r.Groups[0].Label)
+	}
+	if r.Groups[0].Latest != 20 || r.Groups[0].Min != 10 || r.Groups[0].Max != 20 || r.Groups[0].Avg != 15 {
+		t.Errorf("stats: latest=%v min=%v max=%v avg=%v", r.Groups[0].Latest, r.Groups[0].Min, r.Groups[0].Max, r.Groups[0].Avg)
+	}
+	if r.AggAvg != 15 {
+		t.Errorf("agg avg = %v, want 15", r.AggAvg)
 	}
 }
 
-func TestMetricStatsSingle(t *testing.T) {
-	pts := []MetricSeriesPoint{{TimestampNs: 1, Value: 5}}
-	latest, mn, mx, avg, n := metricStats(pts)
-	if latest != 5 || mn != 5 || mx != 5 || avg != 5 || n != 1 {
-		t.Errorf("single: got latest=%v min=%v max=%v avg=%v n=%d", latest, mn, mx, avg, n)
+func TestGroupMetricPointsTwoGroups(t *testing.T) {
+	pts := []repo.MetricPoint{
+		{Type: 1, Attributes: strPtr(`{"method":"exec"}`), ValueDouble: f64Ptr(10)},
+		{Type: 1, Attributes: strPtr(`{"method":"query"}`), ValueDouble: f64Ptr(30)},
+	}
+	r := groupMetricPoints(pts)
+	if len(r.Groups) != 2 {
+		t.Fatalf("groups = %d, want 2", len(r.Groups))
+	}
+	if r.Groups[0].Label != "exec" || r.Groups[1].Label != "query" {
+		t.Errorf("labels = [%q %q], want [exec query]", r.Groups[0].Label, r.Groups[1].Label)
+	}
+	if r.AggAvg != 20 {
+		t.Errorf("agg avg = %v, want 20", r.AggAvg)
 	}
 }
 
-func TestMetricStatsMulti(t *testing.T) {
-	pts := []MetricSeriesPoint{
-		{TimestampNs: 1, Value: 10},
-		{TimestampNs: 2, Value: 20},
-		{TimestampNs: 3, Value: 30},
+func TestGroupMetricPointsPreservesUnit(t *testing.T) {
+	unit := "ms"
+	pts := []repo.MetricPoint{
+		{Type: 2, Unit: &unit, Attributes: strPtr(`{}`), ValueDouble: f64Ptr(5)},
 	}
-	latest, mn, mx, avg, n := metricStats(pts)
-	if latest != 30 || mn != 10 || mx != 30 || avg != 20 || n != 3 {
-		t.Errorf("multi: got latest=%v min=%v max=%v avg=%v n=%d", latest, mn, mx, avg, n)
+	r := groupMetricPoints(pts)
+	if r.Unit != "ms" || r.Type != 2 {
+		t.Errorf("unit=%q type=%d, want ms/2", r.Unit, r.Type)
 	}
 }
+
+// --- metricsModel ---
 
 func TestMetricsModelSetNames(t *testing.T) {
 	m := newMetricsModel()
@@ -117,43 +172,59 @@ func TestMetricsModelSelectedEmpty(t *testing.T) {
 func TestMetricsModelSelectionTriggersLoad(t *testing.T) {
 	m := newMetricsModel()
 	m.setSize(100, 40)
-	// Give the model a source so Update can build a non-nil series cmd.
 	m.setSource(context.Background(), &repo.Queries{})
 	m.setNames([]MetricNameRow{{Name: "a"}, {Name: "b"}})
-	// Prime selected to match current cursor so same-cursor update is a no-op.
 	m.selected = "a"
 
-	// Same cursor (no movement) → no selection-triggered cmd.
 	if _, cmd := m.Update(struct{}{}); cmd != nil {
 		t.Fatalf("no-op update should not emit a cmd, got %T", cmd)
 	}
 
-	// Move cursor down via table key binding ("j").
 	down := tea.KeyPressMsg{Code: 'j', Text: "j"}
 	m2, cmd := m.Update(down)
 	if cmd == nil {
-		t.Fatalf("selection change should emit a series-load cmd")
+		t.Fatalf("selection change should emit a groups-load cmd")
 	}
 	if m2.selected != "b" {
 		t.Fatalf("selected after move = %q, want b", m2.selected)
 	}
 
-	// Second update at the same cursor: no fresh selection-change cmd.
 	if _, cmd := m2.Update(struct{}{}); cmd != nil {
 		t.Fatalf("cursor held at b should not emit a cmd, got %T", cmd)
 	}
 }
 
-func TestMetricsModelSetSeries(t *testing.T) {
+func TestMetricsModelSetGroups(t *testing.T) {
 	m := newMetricsModel()
 	m.setSize(100, 40)
 	m.setNames([]MetricNameRow{{Name: "foo"}})
-	pts := []MetricSeriesPoint{{TimestampNs: 1, Value: 1}, {TimestampNs: 2, Value: 2}}
-	m.setSeries("foo", pts, "ms", 3)
+	m.setGroups(metricGroupsLoadedMsg{
+		Name:      "foo",
+		Groups:    []MetricGroupStats{{Label: "GET 200", Latest: 5, Min: 1, Max: 10, Avg: 5, Count: 3}},
+		AggLatest: 5, AggMin: 1, AggMax: 10, AggAvg: 5,
+		Unit: "s", Type: 3,
+	})
 	if m.selected != "foo" {
 		t.Fatalf("selected = %q, want foo", m.selected)
 	}
-	if len(m.series) != 2 || m.unit != "ms" || m.metricType != 3 {
-		t.Fatalf("setSeries state wrong: series=%d unit=%q type=%d", len(m.series), m.unit, m.metricType)
+	if len(m.groups) != 1 {
+		t.Fatalf("groups len = %d, want 1", len(m.groups))
+	}
+	if m.unit != "s" || m.metricType != 3 {
+		t.Fatalf("unit=%q type=%d, want s/3", m.unit, m.metricType)
+	}
+}
+
+func TestMetricsModelSetKPIs(t *testing.T) {
+	m := newMetricsModel()
+	kpis := KPIData{
+		SQLExecLatency:  "2.00ms",
+		AvgGETDuration:  "5.00ms",
+		AvgPOSTDuration: "12.00ms",
+		IdleConns:       "3",
+	}
+	m.setKPIs(kpis)
+	if m.kpis != kpis {
+		t.Fatalf("kpis mismatch: got %+v, want %+v", m.kpis, kpis)
 	}
 }

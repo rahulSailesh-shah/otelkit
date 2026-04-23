@@ -89,3 +89,12 @@ DELETE FROM metric_points WHERE name = ?;
 
 -- name: DeleteMetricPointsByService :exec
 DELETE FROM metric_points WHERE service_name = ?;
+
+
+-- name: ListMetricPointsByServiceNameAndTimeRange :many
+SELECT * FROM metric_points
+WHERE service_name = ?
+  AND name = ?
+  AND timestamp_ns >= ?
+  AND timestamp_ns <= ?
+ORDER BY timestamp_ns ASC;
