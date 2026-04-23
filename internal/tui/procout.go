@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
 type procOutModel struct {
@@ -50,7 +52,7 @@ func (m procOutModel) tick() procOutModel {
 	return m
 }
 
-func (m procOutModel) Update(msg tea.Msg) (procOutModel, tea.Cmd) {
+func (m *procOutModel) Update(ctx context.Context, q *repo.Queries, msg tea.Msg) (Tab, tea.Cmd) {
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
 	return m, cmd
@@ -76,3 +78,23 @@ func readFileSafe(path string) string {
 	s = strings.TrimRight(s, "\n")
 	return s
 }
+
+func (m *procOutModel) SetSize(w, h int) {
+	m.width, m.height = w, h
+	m.vp.SetWidth(max(40, w-4))
+	m.vp.SetHeight(max(5, h-4))
+}
+
+func (m procOutModel) Label() string { return "Process Output" }
+func (m *procOutModel) HelpKeys() []TabKey {
+	return []TabKey{
+		{Keys: "↑/↓", Help: "scroll"},
+	}
+}
+func (m procOutModel) RefreshCmd(_ context.Context, _ *repo.Queries) tea.Cmd {
+	// ProcOut pulls its own tail via procOutTickCmd — no repo refresh needed.
+	return nil
+}
+func (m procOutModel) OnLeave()            {}
+func (m procOutModel) ConsumesTab() bool   { return false }
+func (m procOutModel) ConsumesEnter() bool { return false }

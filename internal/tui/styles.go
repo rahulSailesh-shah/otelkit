@@ -7,13 +7,6 @@ import (
 )
 
 var (
-	colorBrand   = lipgloss.Color("#006D5B")
-	colorMuted   = lipgloss.Color("#626880")
-	colorText    = lipgloss.Color("#E5E7EB")
-	colorError   = lipgloss.Color("#F38BA8")
-	colorSuccess = lipgloss.Color("#A6E3A1")
-	colorAccent  = lipgloss.Color("#F9E2AF")
-
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(colorBrand)
@@ -36,7 +29,7 @@ var (
 			Padding(0, 1)
 
 	waterfallEmptyStyle    = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
-	waterfallCursorStyle   = lipgloss.NewStyle().Background(lipgloss.Color("#313244")).Foreground(colorText)
+	waterfallCursorStyle   = lipgloss.NewStyle().Background(colorSelect).Foreground(colorText)
 	waterfallDurationStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 
 	barNormal = lipgloss.NewStyle().Foreground(colorBrand)
@@ -60,18 +53,9 @@ func stylesForBarLG(s BarStyle) lipgloss.Style {
 		return barError
 	case BarRoot:
 		return barRoot
-	case BarSlow:
-		return barSlow
 	default:
 		return barNormal
 	}
-}
-
-func shortID(s string) string {
-	if len(s) <= 8 {
-		return s
-	}
-	return s[:8]
 }
 
 func joinTabs(labels []string, active int) string {

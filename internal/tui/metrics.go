@@ -15,23 +15,23 @@ import (
 const metricWindowSec int64 = 900
 
 type metricsModel struct {
-	list       table.Model
-	names      []MetricNameRow
-	selected   string
+	list     table.Model
+	names    []MetricNameRow
+	selected string
 
-	kpis      KPIData
-	groups    []MetricGroupStats
-	aggLatest float64
-	aggMin    float64
-	aggMax    float64
-	aggAvg    float64
+	kpis       KPIData
+	groups     []MetricGroupStats
+	aggLatest  float64
+	aggMin     float64
+	aggMax     float64
+	aggAvg     float64
 	unit       string
 	metricType int64
 	groupTable table.Model
 
-	width      int
-	height     int
-	lastSync   time.Time
+	width    int
+	height   int
+	lastSync time.Time
 
 	ctx     context.Context
 	queries *repo.Queries
@@ -47,7 +47,7 @@ func newMetricsModel() metricsModel {
 	t.SetStyles(table.Styles{
 		Header:   lipgloss.NewStyle().Bold(true).Padding(0, 1).Foreground(colorText).Background(colorBrand),
 		Cell:     lipgloss.NewStyle().Padding(0, 1).Foreground(colorText),
-		Selected: lipgloss.NewStyle().Padding(0, 1).Foreground(colorText).Background(lipgloss.Color("#313244")).Bold(true),
+		Selected: lipgloss.NewStyle().Padding(0, 1).Foreground(colorText).Background(colorSelect).Bold(true),
 	})
 
 	groupCols := []table.Column{
@@ -150,7 +150,7 @@ func (m metricsModel) selectedName() (string, bool) {
 
 func (m metricsModel) Init() tea.Cmd { return nil }
 
-func (m metricsModel) Update(msg tea.Msg) (metricsModel, tea.Cmd) {
+func (m *metricsModel) Update(ctx context.Context, q *repo.Queries, msg tea.Msg) (Tab, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 
@@ -277,9 +277,27 @@ func typeLabel(t int64) string {
 	}
 }
 
-func fmtFloat(v float64) string {
-	if v == float64(int64(v)) {
-		return fmt.Sprintf("%d", int64(v))
+func (m metricsModel) Label() string    { return "Metrics" }
+func (m *metricsModel) HelpKeys() []TabKey {
+	return []TabKey{
+		{Keys: "↑/↓", Help: "select metric"},
 	}
-	return fmt.Sprintf("%.3g", v)
 }
+func (m *metricsModel) SetSize(w, h int) { m.setSize(w, h) }
+
+func (m metricsModel) RefreshCmd(ctx context.Context, q *repo.Queries) tea.Cmd {
+	cmds := []tea.Cmd{
+		loadMetricNamesCmd(ctx, q),
+		loadKPIsCmd(ctx, q),
+	}
+	if name, ok := m.selectedName(); ok {
+		cmds = append(cmds, loadMetricGroupsCmd(ctx, q, name, metricWindowSec))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *metricsModel) OnLeave() {}
+
+func (m metricsModel) ConsumesTab() bool { return false }
+
+func (m metricsModel) ConsumesEnter() bool { return false }

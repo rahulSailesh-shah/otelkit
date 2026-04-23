@@ -2,6 +2,12 @@ package tui
 
 import "charm.land/bubbles/v2/key"
 
+// TabKey describes a per-tab shortcut for display in the help overlay.
+type TabKey struct {
+	Keys string // e.g. "f", "enter"
+	Help string // e.g. "filter", "select"
+}
+
 type keyMap struct {
 	Up       key.Binding
 	Down     key.Binding

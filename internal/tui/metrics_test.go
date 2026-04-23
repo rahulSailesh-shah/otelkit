@@ -176,20 +176,20 @@ func TestMetricsModelSelectionTriggersLoad(t *testing.T) {
 	m.setNames([]MetricNameRow{{Name: "a"}, {Name: "b"}})
 	m.selected = "a"
 
-	if _, cmd := m.Update(struct{}{}); cmd != nil {
+	if _, cmd := m.Update(context.Background(), &repo.Queries{}, struct{}{}); cmd != nil {
 		t.Fatalf("no-op update should not emit a cmd, got %T", cmd)
 	}
 
 	down := tea.KeyPressMsg{Code: 'j', Text: "j"}
-	m2, cmd := m.Update(down)
+	m2, cmd := m.Update(context.Background(), &repo.Queries{}, down)
 	if cmd == nil {
 		t.Fatalf("selection change should emit a groups-load cmd")
 	}
-	if m2.selected != "b" {
-		t.Fatalf("selected after move = %q, want b", m2.selected)
+	if m2.(*metricsModel).selected != "b" {
+		t.Fatalf("selected after move = %q, want b", m2.(*metricsModel).selected)
 	}
 
-	if _, cmd := m2.Update(struct{}{}); cmd != nil {
+	if _, cmd := m2.Update(context.Background(), &repo.Queries{}, struct{}{}); cmd != nil {
 		t.Fatalf("cursor held at b should not emit a cmd, got %T", cmd)
 	}
 }

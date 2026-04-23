@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"testing"
@@ -82,7 +83,7 @@ func TestLogsModelSetRows(t *testing.T) {
 		{ID: 1, TimestampNs: 1_700_000_000_000_000_000, Severity: i64Ptr(17), Service: "api", TraceID: "abcdef1234567890", Body: "boom"},
 		{ID: 2, TimestampNs: 1_700_000_000_000_000_000, Severity: nil, SeverityText: "", Service: "svc", Body: "hi"},
 	}
-	m.setRows(rows)
+	setRowsForTest(&m, rows)
 	if len(m.rows) != 2 {
 		t.Fatalf("rows not stored, got %d", len(m.rows))
 	}
@@ -139,7 +140,7 @@ func stripANSI(s string) string {
 
 func TestApplyLogFiltersSeverity(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies before severity filter = %#v, want all rows in original order", got)
 	}
@@ -147,7 +148,7 @@ func TestApplyLogFiltersSeverity(t *testing.T) {
 	if !ok || got.ID != 3 {
 		t.Fatalf("selectedLog before severity filter = %+v ok=%v, want unfiltered ID 3", got, ok)
 	}
-	m.filters.Severity = "error"
+	m.filter.state.Severity = "error"
 	m.applyFilters()
 	if got := visibleBodies(m); len(got) != 1 || got[0] != "database timeout" {
 		t.Fatalf("visible bodies after severity filter = %#v, want only database timeout", got)
@@ -160,7 +161,7 @@ func TestApplyLogFiltersSeverity(t *testing.T) {
 
 func TestApplyLogFiltersSeverityWarnNumeric(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies before warn severity filter = %#v, want all rows in original order", got)
 	}
@@ -168,7 +169,7 @@ func TestApplyLogFiltersSeverityWarnNumeric(t *testing.T) {
 	if !ok || got.ID != 3 {
 		t.Fatalf("selectedLog before warn severity filter = %+v ok=%v, want unfiltered ID 3", got, ok)
 	}
-	m.filters.Severity = "warn"
+	m.filter.state.Severity = "warn"
 	m.applyFilters()
 	if got := visibleBodies(m); len(got) != 1 || got[0] != "retry scheduled" {
 		t.Fatalf("visible bodies after warn severity filter = %#v, want only retry scheduled", got)
@@ -181,11 +182,11 @@ func TestApplyLogFiltersSeverityWarnNumeric(t *testing.T) {
 
 func TestApplyLogFiltersSeverityExactMatch(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies before exact severity filter = %#v, want all rows in original order", got)
 	}
-	m.filters.Severity = "err"
+	m.filter.state.Severity = "err"
 	m.applyFilters()
 	if got := visibleBodies(m); len(got) != 0 {
 		t.Fatalf("visible bodies after exact severity filter = %#v, want no visible rows", got)
@@ -197,7 +198,7 @@ func TestApplyLogFiltersSeverityExactMatch(t *testing.T) {
 
 func TestApplyLogFiltersServiceSubstring(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleServices(m); len(got) != 3 || got[0] != "api" || got[1] != "api" || got[2] != "worker" {
 		t.Fatalf("visible services before service filter = %#v, want all rows in original order", got)
 	}
@@ -205,7 +206,7 @@ func TestApplyLogFiltersServiceSubstring(t *testing.T) {
 	if !ok || got.ID != 3 {
 		t.Fatalf("selectedLog before service filter = %+v ok=%v, want unfiltered ID 3", got, ok)
 	}
-	m.filters.Service = "WORK"
+	m.filter.state.Service = "WORK"
 	m.applyFilters()
 	if got := visibleServices(m); len(got) != 1 || got[0] != "worker" {
 		t.Fatalf("visible services after service filter = %#v, want only worker", got)
@@ -218,7 +219,7 @@ func TestApplyLogFiltersServiceSubstring(t *testing.T) {
 
 func TestApplyLogFiltersBodySubstringCaseInsensitive(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies before body filter = %#v, want all rows in original order", got)
 	}
@@ -226,7 +227,7 @@ func TestApplyLogFiltersBodySubstringCaseInsensitive(t *testing.T) {
 	if !ok || got.ID != 3 {
 		t.Fatalf("selectedLog before body filter = %+v ok=%v, want unfiltered ID 3", got, ok)
 	}
-	m.filters.Body = "TIMEOUT"
+	m.filter.state.Body = "TIMEOUT"
 	m.applyFilters()
 	if got := visibleBodies(m); len(got) != 1 || got[0] != "database timeout" {
 		t.Fatalf("visible bodies after body filter = %#v, want only database timeout", got)
@@ -239,7 +240,7 @@ func TestApplyLogFiltersBodySubstringCaseInsensitive(t *testing.T) {
 
 func TestApplyLogFiltersCombined(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies before combined filter = %#v, want all rows in original order", got)
 	}
@@ -247,9 +248,9 @@ func TestApplyLogFiltersCombined(t *testing.T) {
 	if !ok || got.ID != 3 {
 		t.Fatalf("selectedLog before combined filter = %+v ok=%v, want unfiltered ID 3", got, ok)
 	}
-	m.filters.Severity = "error"
-	m.filters.Service = "api"
-	m.filters.Body = "timeout"
+	m.filter.state.Severity = "error"
+	m.filter.state.Service = "api"
+	m.filter.state.Body = "timeout"
 	m.applyFilters()
 	if got := visibleBodies(m); len(got) != 1 || got[0] != "database timeout" {
 		t.Fatalf("visible bodies after combined filter = %#v, want only database timeout", got)
@@ -262,7 +263,7 @@ func TestApplyLogFiltersCombined(t *testing.T) {
 
 func TestApplyLogFiltersSeverityAll(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleServices(m); len(got) != 3 || got[0] != "api" || got[1] != "api" || got[2] != "worker" {
 		t.Fatalf("visible services before all severity filter = %#v, want all rows in original order", got)
 	}
@@ -270,8 +271,8 @@ func TestApplyLogFiltersSeverityAll(t *testing.T) {
 	if !ok || got.ID != 3 {
 		t.Fatalf("selectedLog before all severity filter = %+v ok=%v, want unfiltered ID 3", got, ok)
 	}
-	m.filters.Severity = "all"
-	m.filters.Service = "WORK"
+	m.filter.state.Severity = "all"
+	m.filter.state.Service = "WORK"
 	m.applyFilters()
 	if got := visibleServices(m); len(got) != 1 || got[0] != "worker" {
 		t.Fatalf("visible services after severity=all filter = %#v, want only worker", got)
@@ -284,20 +285,21 @@ func TestApplyLogFiltersSeverityAll(t *testing.T) {
 
 func TestClearLogFiltersRestoresAllRows(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies before clear test = %#v, want all rows in original order", got)
 	}
-	m.filters.Severity = "warn"
-	m.filters.Service = "work"
-	m.filters.Body = "retry"
+	m.filter.state.Severity = "warn"
+	m.filter.state.Service = "work"
+	m.filter.state.Body = "retry"
 	m.applyFilters()
 	if got := visibleBodies(m); len(got) != 1 || got[0] != "retry scheduled" {
 		t.Fatalf("visible bodies before clear = %#v, want only retry scheduled", got)
 	}
-	m.clearFilters()
-	if m.filters.Severity != "all" || m.filters.Service != "" || m.filters.Body != "" {
-		t.Fatalf("filters after clear = %+v, want severity=all and empty text filters", m.filters)
+	m.filter.Clear()
+	m.applyFilters()
+	if m.filter.state.Severity != "all" || m.filter.state.Service != "" || m.filter.state.Body != "" {
+		t.Fatalf("filters after clear = %+v, want severity=all and empty text filters", m.filter.state)
 	}
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies after clear = %#v, want all rows visible again", got)
@@ -306,20 +308,20 @@ func TestClearLogFiltersRestoresAllRows(t *testing.T) {
 
 func TestLogsFilterModeShowsInlineFilterRow(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	m.setSize(100, 20)
 
 	if view := stripANSI(m.View()); strings.Contains(view, "Severity") {
 		t.Fatalf("inactive filter mode should not render filter row, got view %q", view)
 	}
 
-	m, _ = m.Update(keyRunes("f"))
+	m = updateLogsForTest(t, m, keyRunes("f"))
 
-	if !m.filterMode {
+	if !m.filter.Active() {
 		t.Fatalf("pressing f should enable filter mode")
 	}
-	if m.activeFilterField != logsFilterFieldSeverity {
-		t.Fatalf("active filter field = %v, want severity", m.activeFilterField)
+	if m.filter.Field() != logsFilterFieldSeverity {
+		t.Fatalf("active filter field = %v, want severity", m.filter.Field())
 	}
 
 	view := stripANSI(m.View())
@@ -332,25 +334,25 @@ func TestLogsFilterModeShowsInlineFilterRow(t *testing.T) {
 
 func TestLogsFilterModeUpdatesFiltersAndPreservesValuesOnEsc(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 
-	m, _ = m.Update(keyRunes("f"))
-	m, _ = m.Update(keyCode(tea.KeyRight))
-	m, _ = m.Update(keyCode(tea.KeyTab))
+	m = updateLogsForTest(t, m, keyRunes("f"))
+	m = updateLogsForTest(t, m, keyCode(tea.KeyRight))
+	m = updateLogsForTest(t, m, keyCode(tea.KeyTab))
 	for _, ch := range "work" {
-		m, _ = m.Update(keyRunes(string(ch)))
+		m = updateLogsForTest(t, m, keyRunes(string(ch)))
 	}
-	m, _ = m.Update(keyCode(tea.KeyTab))
+	m = updateLogsForTest(t, m, keyCode(tea.KeyTab))
 	for _, ch := range "retry" {
-		m, _ = m.Update(keyRunes(string(ch)))
+		m = updateLogsForTest(t, m, keyRunes(string(ch)))
 	}
-	m, _ = m.Update(keyCode(tea.KeyEsc))
+	m = updateLogsForTest(t, m, keyCode(tea.KeyEsc))
 
-	if m.filterMode {
+	if m.filter.Active() {
 		t.Fatalf("esc should exit filter mode")
 	}
-	if m.filters.Severity != "fatal" || m.filters.Service != "work" || m.filters.Body != "retry" {
-		t.Fatalf("filters after editing = %+v, want severity=fatal service=work body=retry", m.filters)
+	if m.filter.state.Severity != "fatal" || m.filter.state.Service != "work" || m.filter.state.Body != "retry" {
+		t.Fatalf("filters after editing = %+v, want severity=fatal service=work body=retry", m.filter.state)
 	}
 	if got := visibleBodies(m); len(got) != 0 {
 		t.Fatalf("visible bodies after edited filters = %#v, want no visible rows", got)
@@ -365,44 +367,44 @@ func TestLogsFilterModeUpdatesFiltersAndPreservesValuesOnEsc(t *testing.T) {
 
 func TestLogsFilterModeCTypesInTextFields(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
-	m, _ = m.Update(keyRunes("f"))
-	m, _ = m.Update(keyCode(tea.KeyTab)) // service
-	if m.activeFilterField != logsFilterFieldService {
-		t.Fatalf("active field = %v, want service", m.activeFilterField)
+	setRowsForTest(&m, sampleLogRows())
+	m = updateLogsForTest(t, m, keyRunes("f"))
+	m = updateLogsForTest(t, m, keyCode(tea.KeyTab)) // service
+	if m.filter.Field() != logsFilterFieldService {
+		t.Fatalf("active field = %v, want service", m.filter.Field())
 	}
-	m, _ = m.Update(keyRunes("c"))
-	if m.filters.Service != "c" {
-		t.Fatalf("service after typing c = %q, want c (clear must not run)", m.filters.Service)
+	m = updateLogsForTest(t, m, keyRunes("c"))
+	if m.filter.state.Service != "c" {
+		t.Fatalf("service after typing c = %q, want c (clear must not run)", m.filter.state.Service)
 	}
-	if m.filters.Severity != "all" {
-		t.Fatalf("severity = %q, want all (uncleared)", m.filters.Severity)
+	if m.filter.state.Severity != "all" {
+		t.Fatalf("severity = %q, want all (uncleared)", m.filter.state.Severity)
 	}
 
-	m, _ = m.Update(keyCode(tea.KeyTab)) // body
-	m, _ = m.Update(keyRunes("a"))
-	m, _ = m.Update(keyRunes("c"))
-	if m.filters.Body != "ac" {
-		t.Fatalf("body after ac = %q, want ac", m.filters.Body)
+	m = updateLogsForTest(t, m, keyCode(tea.KeyTab)) // body
+	m = updateLogsForTest(t, m, keyRunes("a"))
+	m = updateLogsForTest(t, m, keyRunes("c"))
+	if m.filter.state.Body != "ac" {
+		t.Fatalf("body after ac = %q, want ac", m.filter.state.Body)
 	}
 }
 
 func TestLogsFilterModeClearShortcut(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
-	m.filters.Severity = "warn"
-	m.filters.Service = "work"
-	m.filters.Body = "retry"
+	setRowsForTest(&m, sampleLogRows())
+	m.filter.state.Severity = "warn"
+	m.filter.state.Service = "work"
+	m.filter.state.Body = "retry"
 	m.applyFilters()
 
-	m, _ = m.Update(keyRunes("f"))
-	m, _ = m.Update(keyRunes("c"))
+	m = updateLogsForTest(t, m, keyRunes("f"))
+	m = updateLogsForTest(t, m, keyRunes("c"))
 
-	if !m.filterMode {
+	if !m.filter.Active() {
 		t.Fatalf("clear shortcut should keep filter mode active")
 	}
-	if m.filters.Severity != "all" || m.filters.Service != "" || m.filters.Body != "" {
-		t.Fatalf("filters after clear shortcut = %+v, want severity=all and empty text filters", m.filters)
+	if m.filter.state.Severity != "all" || m.filter.state.Service != "" || m.filter.state.Body != "" {
+		t.Fatalf("filters after clear shortcut = %+v, want severity=all and empty text filters", m.filter.state)
 	}
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies after clear shortcut = %#v, want all rows restored", got)
@@ -411,7 +413,7 @@ func TestLogsFilterModeClearShortcut(t *testing.T) {
 
 func TestSelectedLogUsesFilteredRows(t *testing.T) {
 	m := newLogsModel()
-	m.setRows(sampleLogRows())
+	setRowsForTest(&m, sampleLogRows())
 	if got := visibleBodies(m); len(got) != 3 || got[0] != "request complete" || got[1] != "database timeout" || got[2] != "retry scheduled" {
 		t.Fatalf("visible bodies before filtered selection test = %#v, want all rows in original order", got)
 	}
@@ -419,7 +421,7 @@ func TestSelectedLogUsesFilteredRows(t *testing.T) {
 	if !ok || got.ID != 3 {
 		t.Fatalf("selectedLog before filtered selection test = %+v ok=%v, want unfiltered ID 3", got, ok)
 	}
-	m.filters.Body = "RE"
+	m.filter.state.Body = "RE"
 	m.applyFilters()
 	if got := visibleBodies(m); len(got) != 2 || got[0] != "request complete" || got[1] != "retry scheduled" {
 		t.Fatalf("visible bodies after filtered selection test = %#v, want [request complete retry scheduled]", got)
@@ -428,5 +430,22 @@ func TestSelectedLogUsesFilteredRows(t *testing.T) {
 	got, ok = m.selectedLog()
 	if !ok || got.ID != 2 {
 		t.Fatalf("selectedLog with filtered cursor expected ID=2, got %+v ok=%v", got, ok)
+	}
+}
+
+func setRowsForTest(m *logsModel, rows []LogRow) {
+	m.allRows = append([]LogRow(nil), rows...)
+	m.applyFilters()
+}
+
+func updateLogsForTest(t *testing.T, m logsModel, msg tea.Msg) logsModel {
+	t.Helper()
+	tab, _ := m.Update(context.Background(), nil, msg)
+	switch next := tab.(type) {
+	case *logsModel:
+		return *next
+	default:
+		t.Fatalf("logs update returned %T, want *logsModel", tab)
+		return m
 	}
 }

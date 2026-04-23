@@ -14,7 +14,6 @@ type BarStyle int
 const (
 	BarNormal BarStyle = iota
 	BarError
-	BarSlow
 	BarRoot
 )
 
@@ -178,34 +177,4 @@ func (m *waterfallModel) setSpans(spans []repo.Span) {
 	if m.cursor >= len(spans) {
 		m.cursor = 0
 	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	if n <= 1 {
-		return s[:n]
-	}
-	return s[:n-1] + "…"
-}
-
-func fmtDuration(ns int64) string {
-	if ns >= int64(1e9) {
-		return fmt.Sprintf("%.2fs", float64(ns)/1e9)
-	}
-	if ns >= int64(1e6) {
-		return fmt.Sprintf("%dms", ns/int64(1e6))
-	}
-	if ns >= int64(1e3) {
-		return fmt.Sprintf("%dµs", ns/int64(1e3))
-	}
-	return fmt.Sprintf("%dns", ns)
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

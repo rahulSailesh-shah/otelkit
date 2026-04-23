@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -10,14 +12,18 @@ import (
 	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
-type tabID int
-
 const (
-	tabTraces tabID = iota
-	tabMetrics
-	tabLogs
-	tabProcOut
+	tracesPageSize int64 = 100
+	logsPageSize   int64 = 200
 )
+
+const chromeHeight = 3
+
+type tickMsg time.Time
+
+func tickCmd(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
 
 func (t tabID) label() string {
 	switch t {
@@ -33,21 +39,6 @@ func (t tabID) label() string {
 	return ""
 }
 
-type tracesView int
-
-const (
-	viewList tracesView = iota
-	viewWaterfall
-	viewDetail
-)
-
-type logsView int
-
-const (
-	viewLogList logsView = iota
-	viewLogDetail
-)
-
 type appModel struct {
 	ctx     context.Context
 	opts    Options
@@ -56,55 +47,40 @@ type appModel struct {
 	width  int
 	height int
 
-	activeTab  tabID
-	tracesView tracesView
-	logsView   logsView
+	tabs       []Tab
+	ids        []tabID // parallel to tabs — identity for each index
+	active     int
 	showHelp   bool
-
-	traces      tracesModel
-	waterfall   waterfallModel
-	detail      spanDetailModel
-	metrics     metricsModel
-	logs        logsModel
-	logDetail   logDetailModel
-	procOut     procOutModel
-	hasProcOut  bool
-	lastTraceID string
-	lastErr     string
+	procOut    *procOutModel
+	hasProcOut bool
+	lastErr    string
 }
 
 func newAppModel(ctx context.Context, opts Options) appModel {
+	traces := newTracesModel()
+	logs := newLogsModel()
+	metrics := newMetricsModel()
+	metrics.setSource(ctx, opts.Queries)
+
 	m := appModel{
-		ctx:       ctx,
-		opts:      opts,
-		queries:   opts.Queries,
-		activeTab: tabTraces,
-		traces:    newTracesModel(),
-		detail:    newSpanDetailModel(),
-		metrics:   newMetricsModel(),
-		logs:      newLogsModel(),
-		logDetail: newLogDetailModel(),
+		ctx:     ctx,
+		opts:    opts,
+		queries: opts.Queries,
+		tabs:    []Tab{&traces, &metrics, &logs},
+		ids:     []tabID{tabTraces, tabMetrics, tabLogs},
 	}
-	m.metrics.setSource(ctx, opts.Queries)
 	if opts.ChildLogPath != "" {
-		m.procOut = newProcOutModel(opts.ChildLogPath)
+		po := newProcOutModel(opts.ChildLogPath)
+		m.procOut = &po
 		m.hasProcOut = true
+		m.tabs = append(m.tabs, m.procOut)
+		m.ids = append(m.ids, tabProcOut)
 	}
 	return m
 }
 
 func (m appModel) Init() tea.Cmd {
-	return tea.Batch(
-		loadTracesCmd(m.ctx, m.queries, 100),
-		loadLogsCmd(m.ctx, m.queries, 200),
-		loadMetricNamesCmd(m.ctx, m.queries),
-		loadKPIsCmd(m.ctx, m.queries),
-		tickCmd(m.opts.RefreshInterval),
-	)
-}
-
-func (m appModel) logsFilterModeOnList() bool {
-	return m.activeTab == tabLogs && m.logsView == viewLogList && m.logs.filterMode
+	return tea.Batch(m.refreshAllCmd(), tickCmd(m.opts.RefreshInterval))
 }
 
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -112,129 +88,43 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m = m.resize()
+		m.resizeTabs()
 		return m, nil
 
 	case tea.KeyPressMsg:
+		active := m.tabs[m.active]
 		switch {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, keys.Tab):
-			if m.logsFilterModeOnList() {
+			if active.ConsumesTab() {
 				break
 			}
-			prev := m.activeTab
-			m.activeTab = m.nextTab()
-			if prev == tabTraces && m.activeTab != tabTraces {
-				m.tracesView = viewList
-				m.lastTraceID = ""
-			}
-			if prev == tabLogs && m.activeTab != tabLogs {
-				m.logsView = viewLogList
-			}
-			m = m.resize()
+			m.switchTab(+1)
 			return m, m.procOutKickCmd()
 		case key.Matches(msg, keys.ShiftTab):
-			if m.logsFilterModeOnList() {
+			if active.ConsumesTab() {
 				break
 			}
-			prev := m.activeTab
-			m.activeTab = m.prevTab()
-			if prev == tabTraces && m.activeTab != tabTraces {
-				m.tracesView = viewList
-				m.lastTraceID = ""
-			}
-			if prev == tabLogs && m.activeTab != tabLogs {
-				m.logsView = viewLogList
-			}
-			m = m.resize()
+			m.switchTab(-1)
 			return m, m.procOutKickCmd()
+		case key.Matches(msg, keys.Refresh):
+			return m, m.refreshAllCmd()
 		case key.Matches(msg, keys.Help):
 			m.showHelp = !m.showHelp
 			return m, nil
-		case key.Matches(msg, keys.Refresh):
-			cmds := []tea.Cmd{
-				loadTracesCmd(m.ctx, m.queries, 100),
-				loadLogsCmd(m.ctx, m.queries, 200),
-				loadMetricNamesCmd(m.ctx, m.queries),
-				loadKPIsCmd(m.ctx, m.queries),
-			}
-			if name, ok := m.metrics.selectedName(); ok {
-				cmds = append(cmds, loadMetricGroupsCmd(m.ctx, m.queries, name, metricWindowSec))
-			}
-			return m, tea.Batch(cmds...)
-		}
-
-		if m.activeTab == tabTraces {
-			switch {
-			case key.Matches(msg, keys.Enter):
-				switch m.tracesView {
-				case viewList:
-					id, ok := m.traces.selectedTraceID()
-					if ok {
-						m.lastTraceID = id
-						m.tracesView = viewWaterfall
-						return m, loadTraceSpansCmd(m.ctx, m.queries, id)
-					}
-				case viewWaterfall:
-					if s, ok := m.waterfall.selectedSpan(); ok {
-						m.detail.setSpan(s)
-						m.tracesView = viewDetail
-					}
-				}
-				return m, nil
-			case key.Matches(msg, keys.Back):
-				switch m.tracesView {
-				case viewDetail:
-					m.tracesView = viewWaterfall
-				case viewWaterfall:
-					m.tracesView = viewList
-				}
-				return m, nil
-			}
-		}
-
-		if m.activeTab == tabLogs {
-			switch {
-			case key.Matches(msg, keys.Enter):
-				if m.logsFilterModeOnList() {
-					break
-				}
-				if m.logsView == viewLogList {
-					if row, ok := m.logs.selectedLog(); ok {
-						m.logDetail.setLog(row)
-						m.logsView = viewLogDetail
-					}
-				}
-				return m, nil
-			case key.Matches(msg, keys.Back):
-				if m.logsView == viewLogDetail {
-					m.logsView = viewLogList
-					return m, nil
-				}
-				if m.logsFilterModeOnList() {
-					break
-				}
-				return m, nil
+		case key.Matches(msg, keys.Enter):
+			if active.ConsumesEnter() {
+				// fall through to dispatch
 			}
 		}
 
 	case tickMsg:
-		cmds := []tea.Cmd{
-			loadTracesCmd(m.ctx, m.queries, 100),
-			loadLogsCmd(m.ctx, m.queries, 200),
-			loadMetricNamesCmd(m.ctx, m.queries),
-			loadKPIsCmd(m.ctx, m.queries),
-			tickCmd(m.opts.RefreshInterval),
-		}
-		if name, ok := m.metrics.selectedName(); ok {
-			cmds = append(cmds, loadMetricGroupsCmd(m.ctx, m.queries, name, metricWindowSec))
-		}
-		return m, tea.Batch(cmds...)
+		return m, tea.Batch(m.refreshAllCmd(), tickCmd(m.opts.RefreshInterval))
 
 	case procOutTickMsg:
-		if m.hasProcOut && m.activeTab == tabProcOut {
-			m.procOut = m.procOut.tick()
+		if m.hasProcOut && m.ids[m.active] == tabProcOut {
+			*m.procOut = m.procOut.tick()
 			return m, procOutTickCmd()
 		}
 		return m, nil
@@ -242,9 +132,12 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tracesLoadedMsg:
 		if msg.Err != nil {
 			m.lastErr = "traces load: " + msg.Err.Error()
-		} else {
-			m.lastErr = ""
-			m.traces.setRows(msg.Rows)
+			return m, nil
+		}
+		m.lastErr = ""
+		// Traces tab owns its data; look it up by id.
+		if t, ok := m.findTab(tabTraces).(*tracesModel); ok {
+			t.setRows(msg.Rows)
 		}
 		return m, nil
 
@@ -253,18 +146,20 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastErr = "spans load: " + msg.Err.Error()
 			return m, nil
 		}
-		if msg.TraceID == m.lastTraceID {
+		if t, ok := m.findTab(tabTraces).(*tracesModel); ok {
+			t.SetSpans(msg)
 			m.lastErr = ""
-			m.waterfall.setSpans(msg.Spans)
 		}
 		return m, nil
 
 	case logsLoadedMsg:
 		if msg.Err != nil {
 			m.lastErr = "logs load: " + msg.Err.Error()
-		} else {
-			m.lastErr = ""
-			m.logs.setRows(msg.Rows)
+			return m, nil
+		}
+		m.lastErr = ""
+		if l, ok := m.findTab(tabLogs).(*logsModel); ok {
+			l.setRows(msg.Rows)
 		}
 		return m, nil
 
@@ -273,10 +168,14 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastErr = "metric names load: " + msg.Err.Error()
 			return m, nil
 		}
-		prev, hadPrev := m.metrics.selectedName()
 		m.lastErr = ""
-		m.metrics.setNames(msg.Rows)
-		cur, hasCur := m.metrics.selectedName()
+		mm, _ := m.findTab(tabMetrics).(*metricsModel)
+		if mm == nil {
+			return m, nil
+		}
+		prev, hadPrev := mm.selectedName()
+		mm.setNames(msg.Rows)
+		cur, hasCur := mm.selectedName()
 		if hasCur && (!hadPrev || prev != cur) {
 			return m, loadMetricGroupsCmd(m.ctx, m.queries, cur, metricWindowSec)
 		}
@@ -287,8 +186,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastErr = "kpis load: " + msg.Err.Error()
 			return m, nil
 		}
-		m.lastErr = ""
-		m.metrics.setKPIs(msg.Data)
+		if mm, ok := m.findTab(tabMetrics).(*metricsModel); ok {
+			mm.setKPIs(msg.Data)
+			m.lastErr = ""
+		}
 		return m, nil
 
 	case metricGroupsLoadedMsg:
@@ -296,109 +197,39 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastErr = "metric groups load: " + msg.Err.Error()
 			return m, nil
 		}
-		if name, ok := m.metrics.selectedName(); ok && name == msg.Name {
-			m.lastErr = ""
-			m.metrics.setGroups(msg)
+		if mm, ok := m.findTab(tabMetrics).(*metricsModel); ok {
+			if name, ok := mm.selectedName(); ok && name == msg.Name {
+				mm.setGroups(msg)
+				m.lastErr = ""
+			}
 		}
 		return m, nil
 	}
 
-	return m.updateActive(msg)
-}
-
-func (m appModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	switch m.activeTab {
-	case tabTraces:
-		switch m.tracesView {
-		case viewList:
-			m.traces, cmd = m.traces.Update(msg)
-		case viewWaterfall:
-			m.waterfall, cmd = m.waterfall.Update(msg)
-		case viewDetail:
-			m.detail, cmd = m.detail.Update(msg)
-		}
-	case tabMetrics:
-		m.metrics, cmd = m.metrics.Update(msg)
-	case tabLogs:
-		switch m.logsView {
-		case viewLogList:
-			m.logs, cmd = m.logs.Update(msg)
-		case viewLogDetail:
-			m.logDetail, cmd = m.logDetail.Update(msg)
-		}
-	case tabProcOut:
-		if m.hasProcOut {
-			m.procOut, cmd = m.procOut.Update(msg)
-		}
-	}
+	_, cmd := m.tabs[m.active].Update(m.ctx, m.queries, msg)
 	return m, cmd
 }
 
-func (m appModel) nextTab() tabID {
-	order := m.tabOrder()
-	for i, t := range order {
-		if t == m.activeTab {
-			return order[(i+1)%len(order)]
+func (m appModel) refreshAllCmd() tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(m.tabs))
+	for _, t := range m.tabs {
+		if cmd := t.RefreshCmd(m.ctx, m.queries); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
-	return m.activeTab
-}
-
-func (m appModel) prevTab() tabID {
-	order := m.tabOrder()
-	for i, t := range order {
-		if t == m.activeTab {
-			return order[(i-1+len(order))%len(order)]
-		}
-	}
-	return m.activeTab
-}
-
-func (m appModel) tabOrder() []tabID {
-	order := []tabID{tabTraces, tabMetrics, tabLogs}
-	if m.hasProcOut {
-		order = append(order, tabProcOut)
-	}
-	return order
-}
-
-func (m appModel) procOutKickCmd() tea.Cmd {
-	if m.hasProcOut && m.activeTab == tabProcOut {
-		return procOutTickCmd()
-	}
-	return nil
-}
-
-func (m appModel) resize() appModel {
-	contentH := max(5, m.height-3)
-	m.traces.setSize(m.width, contentH)
-	m.waterfall.setSize(m.width, contentH)
-	m.detail.setSize(m.width, contentH)
-	m.metrics.setSize(m.width, contentH)
-	m.logs.setSize(m.width, contentH)
-	m.logDetail.setSize(m.width, contentH)
-	if m.hasProcOut {
-		m.procOut = m.procOut.setSize(m.width, contentH)
-	}
-	return m
+	return tea.Batch(cmds...)
 }
 
 func (m appModel) View() tea.View {
 	labels := []string{}
-	for _, t := range m.tabOrder() {
-		labels = append(labels, t.label())
+	for _, t := range m.tabs {
+		labels = append(labels, t.Label())
 	}
-	active := 0
-	for i, t := range m.tabOrder() {
-		if t == m.activeTab {
-			active = i
-			break
-		}
+	bar := joinTabs(labels, m.active) + "   " + helpStyle.Render("? help · q quit")
+	body := m.tabs[m.active].View()
+	if m.showHelp {
+		body = m.renderHelp()
 	}
-
-	bar := joinTabs(labels, active) + "   " + helpStyle.Render("? help · q quit")
-	body := m.viewActive()
 	parts := []string{bar}
 	if m.lastErr != "" {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorError).Render("! "+m.lastErr))
@@ -411,30 +242,51 @@ func (m appModel) View() tea.View {
 	return v
 }
 
-func (m appModel) viewActive() string {
-	switch m.activeTab {
-	case tabTraces:
-		switch m.tracesView {
-		case viewList:
-			return m.traces.View()
-		case viewWaterfall:
-			return m.waterfall.View()
-		case viewDetail:
-			return m.detail.View()
-		}
-	case tabMetrics:
-		return m.metrics.View()
-	case tabLogs:
-		switch m.logsView {
-		case viewLogList:
-			return m.logs.View()
-		case viewLogDetail:
-			return m.logDetail.View()
-		}
-	case tabProcOut:
-		if m.hasProcOut {
-			return m.procOut.View()
+func (m appModel) renderHelp() string {
+	lines := []string{
+		titleStyle.Render("Global"),
+		helpStyle.Render("  tab / shift+tab  switch tab"),
+		helpStyle.Render("  r                refresh"),
+		helpStyle.Render("  ?                toggle this help"),
+		helpStyle.Render("  q                quit"),
+		"",
+		titleStyle.Render(m.tabs[m.active].Label() + " keys"),
+	}
+	for _, k := range m.tabs[m.active].HelpKeys() {
+		lines = append(lines, helpStyle.Render(fmt.Sprintf("  %-12s %s", k.Keys, k.Help)))
+	}
+	return borderStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+}
+
+func (m *appModel) switchTab(delta int) {
+	prev := m.tabs[m.active]
+	n := len(m.tabs)
+	m.active = (m.active + delta + n) % n
+	if m.tabs[m.active] != prev {
+		prev.OnLeave()
+	}
+	m.resizeTabs()
+}
+
+func (m *appModel) resizeTabs() {
+	contentH := max(5, m.height-chromeHeight)
+	for _, t := range m.tabs {
+		t.SetSize(m.width, contentH)
+	}
+}
+
+func (m appModel) findTab(id tabID) Tab {
+	for i, t := range m.ids {
+		if t == id {
+			return m.tabs[i]
 		}
 	}
-	return ""
+	return nil
+}
+
+func (m appModel) procOutKickCmd() tea.Cmd {
+	if m.hasProcOut && m.ids[m.active] == tabProcOut {
+		return procOutTickCmd()
+	}
+	return nil
 }

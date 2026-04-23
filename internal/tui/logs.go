@@ -1,41 +1,31 @@
 package tui
 
 import (
+	"context"
 	"fmt"
-	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/table"
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/rahulSailesh-shah/otelkit/internal/store/repo"
 )
 
-type logsFilterField int
+type logsView int
 
 const (
-	logsFilterFieldSeverity logsFilterField = iota
-	logsFilterFieldService
-	logsFilterFieldBody
+	logsViewList logsView = iota
+	logsViewDetail
 )
 
-var logsSeverityOptions = []string{"all", "fatal", "error", "warn", "info", "debug", "trace"}
-
-type logsFilterState struct {
-	Severity string
-	Service  string
-	Body     string
-}
-
 type logsModel struct {
+	view     logsView
 	table    table.Model
 	allRows  []LogRow
 	rows     []LogRow
-	filters  logsFilterState
-	filterMode        bool
-	activeFilterField logsFilterField
-	serviceInput      textinput.Model
-	bodyInput         textinput.Model
+	filter   logsFilter
+	detail   logDetailModel
 	lastSync time.Time
 	width    int
 	height   int
@@ -57,22 +47,9 @@ func newLogsModel() logsModel {
 	t.SetStyles(table.Styles{
 		Header:   lipgloss.NewStyle().Bold(true).Padding(0, 1).Foreground(colorText).Background(colorBrand),
 		Cell:     lipgloss.NewStyle().Padding(0, 1).Foreground(colorText),
-		Selected: lipgloss.NewStyle().Padding(0, 1).Foreground(colorText).Background(lipgloss.Color("#313244")).Bold(true),
+		Selected: lipgloss.NewStyle().Padding(0, 1).Foreground(colorText).Background(colorSelect).Bold(true),
 	})
-	serviceInput := textinput.New()
-	serviceInput.Prompt = ""
-	serviceInput.Placeholder = "service"
-	serviceInput.Blur()
-	bodyInput := textinput.New()
-	bodyInput.Prompt = ""
-	bodyInput.Placeholder = "body"
-	bodyInput.Blur()
-	return logsModel{
-		table:        t,
-		filters:      logsFilterState{Severity: "all"},
-		serviceInput: serviceInput,
-		bodyInput:    bodyInput,
-	}
+	return logsModel{table: t, filter: newLogsFilter(), detail: newLogDetailModel()}
 }
 
 func severityStyle(label string) lipgloss.Style {
@@ -112,46 +89,10 @@ func renderLogTableRows(rows []LogRow) []table.Row {
 	return tr
 }
 
-func (m logsModel) filtersActive() bool {
-	sev := strings.ToLower(strings.TrimSpace(m.filters.Severity))
-	if sev != "" && sev != "all" {
-		return true
-	}
-	if strings.TrimSpace(m.filters.Service) != "" {
-		return true
-	}
-	if strings.TrimSpace(m.filters.Body) != "" {
-		return true
-	}
-	return false
-}
-
-func (m logsModel) matchesFilters(row LogRow) bool {
-	severity := strings.ToLower(strings.TrimSpace(m.filters.Severity))
-	if severity != "" && severity != "all" {
-		label := strings.ToLower(severityLabel(row.Severity, strOrNil(row.SeverityText)))
-		if label != severity {
-			return false
-		}
-	}
-
-	service := strings.ToLower(strings.TrimSpace(m.filters.Service))
-	if service != "" && !strings.Contains(strings.ToLower(row.Service), service) {
-		return false
-	}
-
-	body := strings.ToLower(strings.TrimSpace(m.filters.Body))
-	if body != "" && !strings.Contains(strings.ToLower(row.Body), body) {
-		return false
-	}
-
-	return true
-}
-
 func (m *logsModel) applyFilters() {
 	filtered := make([]LogRow, 0, len(m.allRows))
 	for _, row := range m.allRows {
-		if m.matchesFilters(row) {
+		if m.filter.Matches(row) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -162,12 +103,6 @@ func (m *logsModel) applyFilters() {
 	} else if cursor >= len(filtered) {
 		m.table.SetCursor(len(filtered) - 1)
 	}
-}
-
-func (m *logsModel) clearFilters() {
-	m.filters = logsFilterState{Severity: "all"}
-	m.syncInputsFromFilters()
-	m.applyFilters()
 }
 
 func (m *logsModel) setRows(rows []LogRow) {
@@ -185,117 +120,72 @@ func strOrNil(s string) *string {
 
 func (m logsModel) Init() tea.Cmd { return nil }
 
-func (m *logsModel) syncInputsFromFilters() {
-	m.serviceInput.SetValue(m.filters.Service)
-	m.bodyInput.SetValue(m.filters.Body)
-}
-
-func (m *logsModel) focusActiveFilterField() tea.Cmd {
-	m.serviceInput.Blur()
-	m.bodyInput.Blur()
-	switch m.activeFilterField {
-	case logsFilterFieldService:
-		return m.serviceInput.Focus()
-	case logsFilterFieldBody:
-		return m.bodyInput.Focus()
-	default:
-		return nil
-	}
-}
-
-func (m *logsModel) enterFilterMode() tea.Cmd {
-	m.filterMode = true
-	m.activeFilterField = logsFilterFieldSeverity
-	m.syncInputsFromFilters()
-	return m.focusActiveFilterField()
-}
-
-func (m *logsModel) exitFilterMode() {
-	m.filterMode = false
-	m.serviceInput.Blur()
-	m.bodyInput.Blur()
-}
-
-func (m *logsModel) cycleActiveFilterField() tea.Cmd {
-	m.activeFilterField = (m.activeFilterField + 1) % 3
-	return m.focusActiveFilterField()
-}
-
-func (m *logsModel) cycleActiveFilterFieldBack() tea.Cmd {
-	m.activeFilterField = (m.activeFilterField + 2) % 3
-	return m.focusActiveFilterField()
-}
-
-func (m *logsModel) cycleSeverity(delta int) {
-	current := 0
-	for i, option := range logsSeverityOptions {
-		if option == m.filters.Severity {
-			current = i
-			break
+func (m *logsModel) Update(ctx context.Context, q *repo.Queries, msg tea.Msg) (Tab, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+			if key.Matches(keyMsg, keys.Enter) && !m.filter.Active() && m.view == logsViewList {
+				if row, ok := m.selectedLog(); ok {
+					m.detail.setLog(row)
+					m.view = logsViewDetail
+				}
+				return m, nil
+			}
+			if key.Matches(keyMsg, keys.Back) && m.view == logsViewDetail {
+				m.view = logsViewList
+				return m, nil
+			}
 		}
-	}
-	next := (current + delta + len(logsSeverityOptions)) % len(logsSeverityOptions)
-	m.filters.Severity = logsSeverityOptions[next]
-	m.applyFilters()
-}
-
-func (m *logsModel) updateActiveTextFilter(msg tea.Msg) tea.Cmd {
-	var cmd tea.Cmd
-	switch m.activeFilterField {
-	case logsFilterFieldService:
-		m.serviceInput, cmd = m.serviceInput.Update(msg)
-		m.filters.Service = m.serviceInput.Value()
-	case logsFilterFieldBody:
-		m.bodyInput, cmd = m.bodyInput.Update(msg)
-		m.filters.Body = m.bodyInput.Value()
-	default:
-		return nil
-	}
-	m.applyFilters()
-	return cmd
-}
-
-func (m logsModel) Update(msg tea.Msg) (logsModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		if !m.filterMode && msg.String() == "f" {
-			return m, m.enterFilterMode()
+		if !m.filter.Active() && keyMsg.String() == "f" {
+			cmd := m.filter.Enter()
+			return m, cmd
 		}
-		if m.filterMode {
-			switch msg.String() {
+		if m.filter.Active() {
+			switch keyMsg.String() {
 			case "esc":
-				m.exitFilterMode()
+				m.filter.Exit()
 				return m, nil
 			case "tab":
-				return m, m.cycleActiveFilterField()
+				return m, m.filter.NextField()
 			case "shift+tab":
-				return m, m.cycleActiveFilterFieldBack()
+				return m, m.filter.PrevField()
 			case "c":
-				if m.activeFilterField == logsFilterFieldService || m.activeFilterField == logsFilterFieldBody {
-					return m, m.updateActiveTextFilter(msg)
+				if m.filter.Field() == logsFilterFieldSeverity {
+					cmd := m.filter.Clear()
+					m.applyFilters()
+					return m, cmd
 				}
-				m.clearFilters()
-				return m, m.focusActiveFilterField()
+				cmd := m.filter.UpdateInput(msg)
+				m.applyFilters()
+				return m, cmd
 			case "left":
-				if m.activeFilterField == logsFilterFieldSeverity {
-					m.cycleSeverity(-1)
+				if m.filter.Field() == logsFilterFieldSeverity {
+					m.filter.CycleSeverity(-1)
+					m.applyFilters()
 					return m, nil
 				}
 			case "right":
-				if m.activeFilterField == logsFilterFieldSeverity {
-					m.cycleSeverity(1)
+				if m.filter.Field() == logsFilterFieldSeverity {
+					m.filter.CycleSeverity(1)
+					m.applyFilters()
 					return m, nil
 				}
 			}
-			if m.activeFilterField == logsFilterFieldService || m.activeFilterField == logsFilterFieldBody {
-				return m, m.updateActiveTextFilter(msg)
+			if m.filter.Field() == logsFilterFieldService || m.filter.Field() == logsFilterFieldBody {
+				cmd := m.filter.UpdateInput(msg)
+				m.applyFilters()
+				return m, cmd
 			}
 			return m, nil
 		}
 	}
 
 	var cmd tea.Cmd
-	m.table, cmd = m.table.Update(msg)
+	switch m.view {
+	case logsViewList:
+		m.table, cmd = m.table.Update(msg)
+	case logsViewDetail:
+		m.detail, cmd = m.detail.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -320,35 +210,44 @@ func (m logsModel) renderFilterInputField(label, input string, active bool) stri
 }
 
 func (m logsModel) renderFilterRow() string {
-	focus := m.filterMode
-	severity := m.renderFilterField("Severity", m.filters.Severity, focus && m.activeFilterField == logsFilterFieldSeverity)
-	service := m.renderFilterField("Service", m.filters.Service, focus && m.activeFilterField == logsFilterFieldService)
-	body := m.renderFilterField("Body", m.filters.Body, focus && m.activeFilterField == logsFilterFieldBody)
+	focus := m.filter.Active()
+	state := m.filter.State()
+	severity := m.renderFilterField("Severity", state.Severity, focus && m.filter.Field() == logsFilterFieldSeverity)
+	service := m.renderFilterField("Service", state.Service, focus && m.filter.Field() == logsFilterFieldService)
+	body := m.renderFilterField("Body", state.Body, focus && m.filter.Field() == logsFilterFieldBody)
 	if focus {
-		service = m.renderFilterInputField("Service", m.serviceInput.View(), m.activeFilterField == logsFilterFieldService)
-		body = m.renderFilterInputField("Body", m.bodyInput.View(), m.activeFilterField == logsFilterFieldBody)
+		service = m.renderFilterInputField("Service", m.filter.serviceView(), m.filter.Field() == logsFilterFieldService)
+		body = m.renderFilterInputField("Body", m.filter.bodyView(), m.filter.Field() == logsFilterFieldBody)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, severity, "  ", service, "  ", body)
 }
 
 func (m logsModel) View() string {
+	if m.view == logsViewDetail {
+		return m.detail.View()
+	}
 	help := fmt.Sprintf("  last sync %s · f filter · r refresh · enter select · tab switch", nowFmt())
-	if m.filterMode {
+	if m.filter.Active() {
 		help += " · c clear (severity field)"
 	}
 	header := titleStyle.Render("Logs") + helpStyle.Render(help)
 	content := m.table.View()
-	if m.filterMode || m.filtersActive() {
+	if m.filter.Active() || m.filter.HasCriteria() {
 		content = lipgloss.JoinVertical(lipgloss.Left, m.renderFilterRow(), content)
 	}
 	body := borderStyle.Render(content)
 	return lipgloss.JoinVertical(lipgloss.Left, header, body)
 }
 
+func (m *logsModel) Reset() {
+	m.view = logsViewList
+}
+
 func (m *logsModel) setSize(w, h int) {
 	m.width, m.height = w, h
 	m.table.SetWidth(w - 4)
 	m.table.SetHeight(max(5, h-6))
+	m.detail.setSize(w, h)
 	cols := m.table.Columns()
 	used := 0
 	for i, c := range cols {
@@ -362,9 +261,7 @@ func (m *logsModel) setSize(w, h int) {
 		cols[len(cols)-1].Width = remaining
 		m.table.SetColumns(cols)
 	}
-	inputWidth := max(12, (w-20)/4)
-	m.serviceInput.SetWidth(inputWidth)
-	m.bodyInput.SetWidth(inputWidth * 2)
+	m.filter.SetInputWidth(max(12, (w-20)/4))
 }
 
 func (m logsModel) selectedLog() (LogRow, bool) {
@@ -374,3 +271,28 @@ func (m logsModel) selectedLog() (LogRow, bool) {
 	}
 	return m.rows[idx], true
 }
+
+func (m logsModel) ConsumesTab() bool { return m.filter.Active() }
+
+func (m logsModel) ConsumesEnter() bool { return m.filter.Active() }
+
+func (m logsModel) Label() string { return "Logs" }
+
+func (m *logsModel) HelpKeys() []TabKey {
+	return []TabKey{
+		{Keys: "↑/↓", Help: "navigate"},
+		{Keys: "enter", Help: "select"},
+		{Keys: "esc", Help: "back / close filter"},
+		{Keys: "f", Help: "filter"},
+		{Keys: "c", Help: "clear (severity field)"},
+		{Keys: "tab", Help: "cycle filter field (in filter mode)"},
+	}
+}
+
+func (m *logsModel) SetSize(w, h int) { m.setSize(w, h) }
+
+func (m logsModel) RefreshCmd(ctx context.Context, q *repo.Queries) tea.Cmd {
+	return loadLogsCmd(ctx, q, logsPageSize)
+}
+
+func (m *logsModel) OnLeave() { m.Reset() }
