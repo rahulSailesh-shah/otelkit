@@ -25,6 +25,5 @@ go.work.sum
 
 docs/
 docs.md
-examples/
 .cursor/
 .claude/
