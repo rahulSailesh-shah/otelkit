@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/rahulSailesh-shah/otelkit/internal/export"
@@ -36,8 +35,6 @@ func (h *TraceHandler) Export(
 		return nil, err
 	}
 
-	log.Println("[trace] received", len(spans), "spans")
-
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -47,7 +44,6 @@ func (h *TraceHandler) Export(
 	q := repo.New(tx)
 	for _, s := range spans {
 		if err := q.InsertSpan(ctx, s); err != nil {
-			log.Printf("[trace] insert span: %v", err)
 			return nil, err
 		}
 	}

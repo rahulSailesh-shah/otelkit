@@ -1,0 +1,13 @@
+receiver:
+  grpc_addr: ":4317"
+storage:
+  enabled: true
+profiles:
+  dev:
+    tui:
+      enabled: true
+  prod:
+    storage:
+      enabled: false
+    tui:
+      enabled: false

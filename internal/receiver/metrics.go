@@ -41,8 +41,6 @@ func (h *MetricsHandler) Export(
 		return nil, status.Errorf(codes.Internal, "normalize metrics: %v", err)
 	}
 
-	log.Println("[metric] received", len(metrics), "metric points")
-
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
@@ -52,7 +50,6 @@ func (h *MetricsHandler) Export(
 	q := repo.New(tx)
 	for _, m := range metrics {
 		if err := q.InsertMetricPoint(ctx, m); err != nil {
-			log.Printf("[metric] failed to insert metric point: %v", err)
 			return nil, status.Errorf(codes.Internal, "insert metric: %v", err)
 		}
 	}

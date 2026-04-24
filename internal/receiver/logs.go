@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/rahulSailesh-shah/otelkit/internal/export"
@@ -31,8 +30,6 @@ func (h *LogsHandler) Export(
 		return nil, err
 	}
 
-	log.Println("[logs] received", len(params), "log records")
-
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -42,7 +39,6 @@ func (h *LogsHandler) Export(
 	q := repo.New(tx)
 	for _, p := range params {
 		if err := q.InsertLogRecord(ctx, p); err != nil {
-			log.Printf("[logs] insert log record: %v", err)
 			return nil, err
 		}
 	}

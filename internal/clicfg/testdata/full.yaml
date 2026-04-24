@@ -1,0 +1,12 @@
+receiver:
+  grpc_addr: ":14317"
+storage:
+  enabled: true
+  path: ./custom.db
+tui:
+  enabled: false
+  refresh: 5s
+fanout:
+  - type: jaeger
+    endpoint: localhost:14317
+    insecure: true

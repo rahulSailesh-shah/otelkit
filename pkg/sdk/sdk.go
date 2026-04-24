@@ -59,10 +59,10 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// Init wires traces, metrics, and logs providers to the OTLP endpoint and sets
+// Bootstrap wires traces, metrics, and logs providers to the OTLP endpoint and sets
 // OTel globals. Call once from main(); defer the returned ShutdownFunc.
 // To instrument logging, use otelkitlog.Wrap() after Init.
-func Init(opts ...Option) (ShutdownFunc, error) {
+func Bootstrap(opts ...Option) (ShutdownFunc, error) {
 	c := &config{
 		endpoint: "localhost:4317",
 		insecure: true,

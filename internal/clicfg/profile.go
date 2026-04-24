@@ -1,4 +1,4 @@
-package config
+package clicfg
 
 func Merge(base, overlay map[string]any) map[string]any {
 	if base == nil {

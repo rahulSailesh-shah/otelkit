@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	shutdown, err := sdk.Init(
+	shutdown, err := sdk.Bootstrap(
 		sdk.WithServiceName("demo-api"),
 		sdk.WithServiceVersion("0.1.0"),
 		sdk.WithEndpoint("localhost:4317"),

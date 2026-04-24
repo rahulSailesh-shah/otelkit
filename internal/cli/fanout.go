@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/rahulSailesh-shah/otelkit/internal/clicfg"
 	"github.com/rahulSailesh-shah/otelkit/internal/export"
 )
 
@@ -42,5 +43,40 @@ func buildFanout(cfg fanoutConfig) (*export.Fanout, error) {
 		metricsExporters = append(metricsExporters, s)
 		logsExporters = append(logsExporters, s)
 	}
+	return export.NewFanout(traceExporters, metricsExporters, logsExporters), nil
+}
+
+func buildFanoutFromConfig(entries []clicfg.FanoutEntry) (*export.Fanout, error) {
+	var traceExporters []export.TraceExporter
+	var metricsExporters []export.MetricsExporter
+	var logsExporters []export.LogsExporter
+
+	for _, f := range entries {
+		switch f.Type {
+		case "jaeger":
+			j, err := export.NewJaegerExporter(f.Endpoint)
+			if err != nil {
+				return nil, err
+			}
+			traceExporters = append(traceExporters, j)
+		case "prometheus":
+			p, err := export.NewPrometheusExporter(f.Listen)
+			if err != nil {
+				return nil, err
+			}
+			metricsExporters = append(metricsExporters, p)
+		case "loki":
+			logsExporters = append(logsExporters, export.NewLokiExporter(f.Endpoint))
+		case "signoz", "otlp":
+			s, err := export.NewSigNozExporter(f.Endpoint)
+			if err != nil {
+				return nil, err
+			}
+			traceExporters = append(traceExporters, s)
+			metricsExporters = append(metricsExporters, s)
+			logsExporters = append(logsExporters, s)
+		}
+	}
+
 	return export.NewFanout(traceExporters, metricsExporters, logsExporters), nil
 }

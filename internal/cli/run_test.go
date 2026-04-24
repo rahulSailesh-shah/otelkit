@@ -6,15 +6,9 @@ func TestRunCmdFlags(t *testing.T) {
 	cmd := newRunCmd()
 
 	wantFlags := map[string]string{
-		"grpc-addr":       ":4317",
-		"service":         "",
-		"jaeger-addr":     "",
-		"prometheus-addr": "",
-		"loki-addr":       "",
-		"signoz-addr":     "",
-		"tui":             "false",
-		"child-log":       "",
-		"refresh":         "2s",
+		"service":   "",
+		"child-log": "",
+		"config":    "",
 	}
 	for name, def := range wantFlags {
 		f := cmd.Flags().Lookup(name)
@@ -24,6 +18,21 @@ func TestRunCmdFlags(t *testing.T) {
 		}
 		if f.DefValue != def {
 			t.Errorf("flag --%s default = %q, want %q", name, f.DefValue, def)
+		}
+	}
+
+	for _, name := range []string{
+		"grpc-addr",
+		"jaeger-addr",
+		"prometheus-addr",
+		"loki-addr",
+		"signoz-addr",
+		"tui",
+		"refresh",
+		"profile",
+	} {
+		if f := cmd.Flags().Lookup(name); f != nil {
+			t.Errorf("flag --%s should not exist", name)
 		}
 	}
 }

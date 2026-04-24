@@ -1,0 +1,112 @@
+# otelkit.yaml — full configuration reference
+#
+# Env vars override:
+#   OTELKIT_CONFIG          path to this file (auto-discovered otherwise)
+#   OTELKIT_PROFILE         activate a profile (dev | signoz | prod)
+#   OTELKIT_GRPC_ADDR       receiver.grpc_addr
+#   OTELKIT_STORAGE_ENABLED storage.enabled
+#   OTELKIT_STORAGE_PATH    storage.path
+#   OTELKIT_TUI_ENABLED     tui.enabled
+#
+# Env expansion in string values: ${VAR} or ${VAR:-default}
+
+# ── Receiver ───────────────────────────────────────────────────────────────────
+# OTLP gRPC endpoint that your instrumented service dials.
+# Point your service at: OTELKIT_GRPC_ADDR or OTELKIT_EXPORTER_OTLP_ENDPOINT
+receiver:
+  grpc_addr: ":4317"
+
+# ── Storage ────────────────────────────────────────────────────────────────────
+# Local SQLite used by the TUI to query spans / metrics / logs.
+# Set enabled: false for ":memory:" (nothing persisted across runs).
+storage:
+  enabled: true
+  path: ${OTELKIT_DB_PATH:-./otelkit.db}
+
+# ── TUI ────────────────────────────────────────────────────────────────────────
+tui:
+  enabled: false
+  refresh: 2s
+
+# ── Fanout ─────────────────────────────────────────────────────────────────────
+# Empty by default; profiles below override this list.
+# Each entry forwards signals to an external backend.
+#
+# Supported types and their required fields:
+#   jaeger     → endpoint (OTLP gRPC addr, e.g. localhost:14317)      traces
+#   prometheus → listen   (scrape addr,    e.g. :9091)                metrics
+#   loki       → endpoint (push URL,       e.g. http://localhost:3100) logs
+#   signoz     → endpoint (OTLP gRPC addr, e.g. localhost:24317)      traces + metrics + logs
+#   otlp       → endpoint (OTLP gRPC addr)                            traces + metrics + logs
+fanout: []
+
+# ── Profiles ───────────────────────────────────────────────────────────────────
+# Profiles deep-merge onto the base config above.
+# Activate: OTELKIT_PROFILE=dev  otelkit run -- <cmd>
+# Or:       make run-grafana   (sets up Grafana stack)
+#           make run-signoz    (sets up SigNoz stack)
+profiles:
+  # ── dev (Grafana stack) ─────────────────────────────────────────────────────
+  # Prerequisites: make grafana-up
+  # UIs:  Jaeger     http://localhost:16686
+  #        Prometheus http://localhost:9090
+  #        Grafana    http://localhost:3000  (admin / admin)
+  dev:
+    tui:
+      enabled: true
+      refresh: 2s
+    storage:
+      enabled: true
+      path: ${OTELKIT_DB_PATH:-./otelkit.db}
+    fanout:
+      # Traces → Jaeger (OTLP gRPC)
+      - type: jaeger
+        endpoint: ${JAEGER_ADDR:-localhost:14317}
+        insecure: true
+        # headers:
+        #   x-tenant: my-org
+        # tls:
+        #   ca_file: ./certs/ca.pem
+        #   cert_file: ./certs/client.pem
+        #   key_file: ./certs/client-key.pem
+        #   insecure_skip_verify: false
+
+      # Metrics → Prometheus (scrape listener)
+      - type: prometheus
+        listen: ${PROMETHEUS_LISTEN:-:9091}
+
+      # Logs → Loki (HTTP push)
+      - type: loki
+        endpoint: ${LOKI_ADDR:-http://localhost:3100}
+
+  # ── signoz (SigNoz stack) ───────────────────────────────────────────────────
+  # Prerequisites: make signoz-up
+  # UI: http://localhost:8080
+  signoz:
+    tui:
+      enabled: true
+      refresh: 2s
+    storage:
+      enabled: true
+      path: ${OTELKIT_DB_PATH:-./otelkit.db}
+    fanout:
+      # Traces + metrics + logs → SigNoz (OTLP gRPC)
+      - type: signoz
+        endpoint: ${SIGNOZ_ADDR:-localhost:24317}
+        insecure: true
+
+  # ── prod ────────────────────────────────────────────────────────────────────
+  # Example: remote OTLP collector with auth header + TLS
+  prod:
+    storage:
+      enabled: false
+    tui:
+      enabled: false
+    fanout:
+      - type: otlp
+        endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+        insecure: false
+        headers:
+          authorization: "Bearer ${OTEL_EXPORTER_OTLP_HEADERS_AUTH}"
+        tls:
+          insecure_skip_verify: false
